@@ -1,0 +1,16 @@
+services:
+  monitor-agent:
+    build:
+      context: ./app
+      dockerfile: Dockerfile
+    container_name: heartbeat-agent
+    restart: unless-stopped
+    user: "1001:988"
+    env_file:
+      - ./.env
+    environment:
+      - TZ=America/Lima
+      - PYTHONUNBUFFERED=1
+    volumes:
+      - ./data:/app/data
+      - /var/run/docker.sock:/var/run/docker.sock
