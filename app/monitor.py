@@ -52,7 +52,8 @@ def initialize_database():
                 container_count INTEGER NOT NULL,
                 internet_ok INTEGER NOT NULL,
                 ping_ms REAL,
-                worker_status INTEGER
+                worker_status INTEGER,
+                cycle_duration_ms REAL
             )
         """)
         con.commit()
@@ -141,8 +142,8 @@ def save_metrics_to_db(metrics):
         cur.execute("""
             INSERT INTO metrics (
                 id, timestamp_lima, cpu_percent, ram_percent, ram_used_mb, 
-                disk_percent, container_count, internet_ok, ping_ms, worker_status
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                disk_percent, container_count, internet_ok, ping_ms, worker_status, cycle_duration_ms
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             str(uuid.uuid4()),
             metrics['timestamp_lima'],
@@ -153,7 +154,8 @@ def save_metrics_to_db(metrics):
             metrics['container_count'],
             metrics['internet_ok'],
             metrics['ping_ms'],
-            metrics['worker_status']
+            metrics['worker_status'],
+            metrics['cycle_duration_ms']
         ))
         con.commit()
         con.close()
@@ -194,6 +196,10 @@ def main():
                 "worker_status": worker_status
             }
             
+            # Calculate cycle duration before saving
+            cycle_duration_ms = (time.monotonic() - cycle_start_time) * 1000
+            all_metrics["cycle_duration_ms"] = cycle_duration_ms
+
             # 3. Save metrics to the database
             save_metrics_to_db(all_metrics)
 
@@ -227,13 +233,13 @@ def main():
             # This is no longer the initial run after the first cycle
             is_initial_run = False
             
-            # 5. Log success message
-            cycle_duration_ms = (time.monotonic() - cycle_start_time) * 1000
-            print(f"{timestamp_lima} - Metrics saved. Cycle duration: {cycle_duration_ms:.2f}ms")
+            # 5. Log success message 
+            print(f"{timestamp_lima} - Metrics saved. Cycle duration: {all_metrics['cycle_duration_ms']:.2f}ms")
 
         except Exception as e:
             print(f"An unexpected error occurred in the main loop: {e}")
             time.sleep(LOOP_INTERVAL_SECONDS)
+
 
 if __name__ == "__main__":
     main()

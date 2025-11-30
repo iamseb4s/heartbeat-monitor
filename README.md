@@ -31,6 +31,7 @@ The collected data is stored in an SQLite database (`metrics.db`) within the `da
 | `internet_ok` | `INTEGER` | `1` if internet is accessible, `0` otherwise. |
 | `ping_ms` | `REAL` | Latency in milliseconds to a test server (Google). `NULL` if no internet. |
 | `worker_status` | `INTEGER` | HTTP status code of the heartbeat sent to the Cloudflare worker. `NULL` if heartbeat failed. |
+| `cycle_duration_ms` | `REAL` | Duration of the current monitoring cycle in milliseconds. |
 
 ## `monitor.py` - The Core Agent Script
 

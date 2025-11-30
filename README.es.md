@@ -31,6 +31,7 @@ Los datos recopilados se almacenan en una base de datos SQLite (`metrics.db`) de
 | `internet_ok` | `INTEGER` | `1` si Internet es accesible, `0` en caso contrario. |
 | `ping_ms` | `REAL` | Latencia en milisegundos a un servidor de prueba (Google). `NULL` si no hay Internet. |
 | `worker_status` | `INTEGER` | Código de estado HTTP del latido enviado al Cloudflare Worker. `NULL` si el latido falló. |
+| `cycle_duration_ms` | `REAL` | Duración del ciclo de monitoreo actual en milisegundos. |
 
 ## `monitor.py` - El Script Agente Principal
 
