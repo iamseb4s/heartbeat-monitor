@@ -42,7 +42,7 @@ El script `app/monitor.py` es el componente central responsable de:
 * **Transmisión de Latidos:** Envía datos autenticados a la `HEARTBEAT_URL` configurada.
 * **Alineación al Reloj:** Gestiona el bucle de ejecución para asegurar que las métricas se recopilen precisamente cada 10 segundos.
 * **Persistencia de Estado:** Lee el `last_worker_status` de la base de datos al inicio para mantener el contexto de alerta entre reinicios.
-* **Lógica de Alerta:** Detecta cambios en `worker_status` y envía alertas detalladas al webhook de n8n, suprimiendo inteligentemente los falsos positivos en el inicio inicial.
+* **Lógica de Alerta:** Implementa una máquina de estados para prevenir el spam de alertas por fallos transitorios. Solo activa una alerta a n8n cuando un nuevo estado (ej. un fallo o una recuperación) se mantiene de forma consistente durante un número definido de ciclos (por defecto, 3), asegurando que las notificaciones solo se envíen para cambios de estado estables.
 
 ## Cómo Empezar
 

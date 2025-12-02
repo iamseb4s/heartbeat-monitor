@@ -42,7 +42,7 @@ The `app/monitor.py` script is the central component responsible for:
 * **Heartbeat Transmission:** Sends authenticated data to the configured `HEARTBEAT_URL`.
 * **Clock Alignment:** Manages the execution loop to ensure metrics are collected precisely every 10 seconds.
 * **State Persistence:** Reads the `last_worker_status` from the database on startup to maintain alerting context across restarts.
-* **Alerting Logic:** Detects changes in `worker_status` and sends detailed alerts to the n8n webhook, intelligently suppressing false positives on initial startup.
+* **Alerting Logic:** Implements a state machine to prevent alert spam from transient failures. It only triggers an n8n alert when a new status (e.g., a failure or a recovery) is consistently maintained for a defined number of cycles (default is 3), ensuring notifications are only sent for stable state changes.
 
 ## Getting Started
 
