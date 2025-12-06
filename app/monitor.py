@@ -230,14 +230,52 @@ def send_heartbeat(services_payload):
         print(f"Heartbeat request failed: {e}")
         return None
 
-def send_n8n_alert(previous_status, new_status):
-    """Sends a formatted alert to the n8n webhook for a confirmed state change."""
+def send_n8n_alert(previous_status, new_status, internet_ok):
+    """Sends a formatted, customized alert to the n8n webhook for a confirmed state change."""
     if not N8N_WEBHOOK_URL:
         print("Warning: N8N_WEBHOOK_URL is not set. Could not send alert.")
         return
-    title = "⚠️ Cambio de Estado en Heartbeat-Monitor ⚠️"
-    message = f"El estado del worker ha cambiado de forma estable.\n\nNuevo Estado: `{new_status or 'N/A'}`\nEstado Anterior: `{previous_status or 'N/A'}`"
-    alert_payload = {"title": title, "message": message}
+
+    # Handle NULL status with more context first
+    if new_status is None:
+        if not internet_ok:
+            title = "🔥 Error Crítico (Sin Internet): Heartbeat-Monitor"
+            message = f"No se pudo contactar la API del worker porque no hay conexión a internet en el servidor.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`"
+        else:
+            title = "🔥 Error Crítico (API Inaccesible): Heartbeat-Monitor"
+            message = f"No se pudo contactar la API del worker, a pesar de tener conexión a internet. La API del worker podría estar caída.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`"
+        
+        alert_payload = {"title": title, "message": message}
+    else:
+        # Define titles and messages for numeric statuses
+        status_map = {
+            200: {
+                "title": "✅ Recuperación: Heartbeat-Monitor",
+                "message": f"El servicio se ha recuperado y funciona correctamente.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Éxito)"
+            },
+            220: {
+                "title": "⚠️ Advertencia (Ciego): Heartbeat-Monitor",
+                "message": f"El latido fue recibido, pero la API no pudo leer su estado anterior. No se pueden detectar recuperaciones.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Advertencia)"
+            },
+            221: {
+                "title": "⚠️ Advertencia (Fallo en Actualización): Heartbeat-Monitor",
+                "message": f"Se detectó una recuperación, pero la API falló al actualizar su estado o enviar la notificación de recuperación.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Advertencia)"
+            },
+            500: {
+                "title": "🔥 Error Crítico (Worker): Heartbeat-Monitor",
+                "message": f"La API del worker encontró un error interno crítico y no pudo procesar el latido.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Error de Worker)"
+            }
+        }
+        
+        # Default message for any other status code
+        default_info = {
+            "title": f"ℹ️ Cambio de Estado: Heartbeat-Monitor",
+            "message": f"El estado del worker ha cambiado de forma estable.\n\n- **Nuevo Estado:** `{new_status or 'N/A'}`\n- **Estado Anterior:** `{previous_status or 'N/A'}`"
+        }
+
+        alert_info = status_map.get(new_status, default_info)
+        alert_payload = {"title": alert_info["title"], "message": alert_info["message"]}
+
     try:
         # Use the global session object
         session.post(N8N_WEBHOOK_URL, json=alert_payload, timeout=2)
