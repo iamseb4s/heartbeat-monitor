@@ -7,25 +7,50 @@ import requests
 import psutil
 import pytz
 import docker
+import json
 from pathlib import Path
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # --- Constants ---
 DB_FILE = Path("/app/data/metrics.db")
 LOOP_INTERVAL_SECONDS = 10
 LIMA_TZ = pytz.timezone('America/Lima')
 PING_URL = "http://www.google.com"
-STATE_CHANGE_THRESHOLD = 3 # Number of consecutive identical statuses to consider a state "stable"
+STATE_CHANGE_THRESHOLD = 4 # Number of consecutive identical statuses to consider a state "stable"
+SERVICE_TIMEOUT_SECONDS = 2 # Global timeout for service health checks (in seconds)
 
-# --- Environment Variables ---
+# --- Environment Variables & Dynamic Config ---
 SECRET_KEY = os.getenv('SECRET_KEY')
 HEARTBEAT_URL = os.getenv('HEARTBEAT_URL')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
+
+def parse_services_from_env():
+    """Parses service configuration from environment variables."""
+    services = {}
+    service_names_str = os.getenv('SERVICE_NAMES', '')
+    if not service_names_str:
+        print("Warning: SERVICE_NAMES environment variable not set. No services will be monitored.")
+        return services
+        
+    service_names = [name.strip() for name in service_names_str.split(',')]
+    
+    for name in service_names:
+        url = os.getenv(f'SERVICE_URL_{name}')
+        if url:
+            services[name] = url
+        else:
+            print(f"Warning: Missing URL for service '{name}'. Environment variable SERVICE_URL_{name} not found.")
+            
+    return services
+
+SERVICES_TO_CHECK = parse_services_from_env()
 
 # --- Global State for Alerting ---
 last_stable_status = None
 transient_status = None
 transient_counter = 0
 
+# --- Database Functions ---
 def initialize_database():
     """Initializes the SQLite database and its schema."""
     try:
@@ -53,7 +78,8 @@ def initialize_database():
                 internet_ok INTEGER NOT NULL,
                 ping_ms REAL,
                 worker_status INTEGER,
-                cycle_duration_ms REAL
+                cycle_duration_ms INTEGER,
+                services_health TEXT
             )
         """)
         con.commit()
@@ -79,16 +105,36 @@ def get_initial_stable_status():
         print(f"Could not determine initial state from DB, assuming None. Error: {e}")
         return None
 
+def save_metrics_to_db(metrics):
+    """Saves a dictionary of metrics to the SQLite database."""
+    try:
+        con = sqlite3.connect(DB_FILE, timeout=5)
+        cur = con.cursor()
+        cur.execute("""
+            INSERT INTO metrics (id, timestamp_lima, cpu_percent, ram_percent, ram_used_mb, 
+            disk_percent, container_count, internet_ok, ping_ms, worker_status, cycle_duration_ms, services_health)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+            (str(uuid.uuid4()), metrics['timestamp_lima'], metrics['cpu_percent'], metrics['ram_percent'], metrics['ram_used_mb'], 
+            metrics['disk_percent'], metrics['container_count'], metrics['internet_ok'], metrics['ping_ms'], 
+            metrics['worker_status'], metrics['cycle_duration_ms'], metrics['services_health']))
+        con.commit()
+        con.close()
+    except sqlite3.Error as e:
+        print(f"Database error when saving metrics: {e}")
+
+# --- Metric & Health Check Functions ---
 def get_system_metrics():
-    """Collects CPU, RAM, and Disk metrics."""
-    cpu_percent = psutil.cpu_percent(interval=1)
+    """Collects and rounds CPU, RAM, and Disk metrics."""
+    # psutil.cpu_percent(interval=1) is a blocking call that waits for 1 second.
+    # It's CPU-bound and is now called sequentially to avoid thread pool starvation.
+    cpu_percent = psutil.cpu_percent(interval=1) 
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
     return {
-        "cpu_percent": cpu_percent,
-        "ram_percent": ram.percent,
-        "ram_used_mb": ram.used / (1024 * 1024),
-        "disk_percent": disk.percent
+        "cpu_percent": round(cpu_percent, 2),
+        "ram_percent": round(ram.percent, 2),
+        "ram_used_mb": round(ram.used / (1024 * 1024), 2),
+        "disk_percent": round(disk.percent, 2)
     }
 
 def get_container_count():
@@ -101,70 +147,68 @@ def get_container_count():
         return -1
 
 def check_internet_and_ping():
-    """Checks for internet connectivity and measures latency to Google."""
+    """Checks for internet connectivity and measures latency."""
     try:
-        start_time = time.monotonic()
-        # Use HEAD request for efficiency as we don't need the body
-        response = requests.head(PING_URL, timeout=2)
-        end_time = time.monotonic()
+        response = requests.head(PING_URL, timeout=2) # Timeout of 2 seconds for internet connectivity check
         if response.status_code >= 200 and response.status_code < 400:
-            return 1, (end_time - start_time) * 1000
+            return 1, int(response.elapsed.total_seconds() * 1000)
     except requests.exceptions.RequestException:
         pass
     return 0, None
 
-def send_heartbeat():
-    """Sends a heartbeat to the Cloudflare worker."""
+def _check_one_service(name, url):
+    """
+    Helper function to check a single service, capturing latency.
+    Adds 'Connection: close' header to prevent connection pooling issues.
+    """
+    headers = {'Connection': 'close'}
+    try:
+        response = requests.head(url, timeout=SERVICE_TIMEOUT_SECONDS, headers=headers)
+        if response.status_code >= 200 and response.status_code < 400:
+            latency_ms = response.elapsed.total_seconds() * 1000
+            return name, {"status": "healthy", "latency_ms": int(latency_ms)}
+    except requests.exceptions.RequestException as e:
+        # Detailed logging for diagnostics when a service check fails
+        print(f"Health check for '{name}' ({url}) FAILED. Error: {e}")
+    return name, {"status": "unhealthy", "latency_ms": None}
+
+def check_services_health(executor):
+    """Checks the health of configured services in parallel."""
+    if not SERVICES_TO_CHECK:
+        return {"services": {}}
+        
+    futures = {executor.submit(_check_one_service, name, url): name for name, url in SERVICES_TO_CHECK.items()}
+    services_status = {}
+    for future in as_completed(futures):
+        name, status = future.result()
+        services_status[name] = status
+        
+    return {"services": services_status}
+
+# --- Heartbeat & Alerting ---
+def send_heartbeat(services_payload):
+    """Sends a heartbeat with services status to the Cloudflare worker."""
     if not SECRET_KEY or not HEARTBEAT_URL:
         if not hasattr(send_heartbeat, "warned"):
             print("Warning: Missing SECRET_KEY or HEARTBEAT_URL.")
             send_heartbeat.warned = True
         return None
-    headers = {"Authorization": f"Bearer {SECRET_KEY}"}
+    
+    headers = {"Authorization": f"Bearer {SECRET_KEY}", "Content-Type": "application/json"}
     try:
-        response = requests.post(HEARTBEAT_URL, headers=headers, timeout=3)
+        response = requests.post(HEARTBEAT_URL, headers=headers, json=services_payload, timeout=6)
         return response.status_code
     except requests.exceptions.RequestException as e:
         print(f"Heartbeat request failed: {e}")
         return None
-
-def save_metrics_to_db(metrics):
-    """Saves a dictionary of metrics to the SQLite database."""
-    try:
-        con = sqlite3.connect(DB_FILE, timeout=5)
-        cur = con.cursor()
-        cur.execute("""
-            INSERT INTO metrics (
-                id, timestamp_lima, cpu_percent, ram_percent, ram_used_mb, 
-                disk_percent, container_count, internet_ok, ping_ms, worker_status, cycle_duration_ms
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        """, (
-            str(uuid.uuid4()),
-            metrics['timestamp_lima'],
-            metrics['cpu_percent'],
-            metrics['ram_percent'],
-            metrics['ram_used_mb'],
-            metrics['disk_percent'],
-            metrics['container_count'],
-            metrics['internet_ok'],
-            metrics['ping_ms'],
-            metrics['worker_status'],
-            metrics['cycle_duration_ms']
-        ))
-        con.commit()
-        con.close()
-    except sqlite3.Error as e:
-        print(f"Database error when saving metrics: {e}")
 
 def send_n8n_alert(previous_status, new_status):
     """Sends a formatted alert to the n8n webhook for a confirmed state change."""
     if not N8N_WEBHOOK_URL:
         print("Warning: N8N_WEBHOOK_URL is not set. Could not send alert.")
         return
-
     title = "⚠️ Cambio de Estado en Heartbeat-Monitor ⚠️"
-    message = f"El estado del worker ha cambiado.\n\nNuevo Estado: `{new_status or 'N/A'}`\nEstado Anterior: `{previous_status or 'N/A'}`"
-    
+    message = f"El estado del worker ha cambiado de forma estable.\n\nNuevo Estado: `{new_status or 'N/A'}`\nEstado Anterior: `{previous_status or 'N/A'}`"
     try:
         alert_payload = {"title": title, "message": message}
         requests.post(N8N_WEBHOOK_URL, json=alert_payload, timeout=2)
@@ -172,17 +216,22 @@ def send_n8n_alert(previous_status, new_status):
     except requests.exceptions.RequestException as e:
         print(f"Failed to send state change alert to n8n: {e}")
 
+# --- Main Execution ---
 def main():
-    """Main monitoring loop with detailed state change detection."""
+    """Main monitoring loop with parallel data collection."""
     global last_stable_status, transient_status, transient_counter
     
     initialize_database()
     
+    if not SERVICES_TO_CHECK:
+        print("CRITICAL: No services configured. Please set SERVICE_NAMES and SERVICE_URL_* environment variables.")
+        return
+
     last_stable_status = get_initial_stable_status()
     transient_status = last_stable_status
-    transient_counter = 0 # Start counter at 0; first observation will make it 1
+    transient_counter = 0
     
-    print(f"Starting monitoring loop. Initial stable state: {last_stable_status}")
+    print(f"Starting monitoring loop. Initial stable state: {last_stable_status}. Monitoring services: {list(SERVICES_TO_CHECK.keys())}")
     
     while True:
         try:
@@ -194,11 +243,37 @@ def main():
             cycle_start_time = time.monotonic()
             timestamp_lima = datetime.datetime.now(LIMA_TZ).isoformat()
 
-            # 2. Collect Metrics
-            internet_ok, ping_ms = check_internet_and_ping()
-            worker_status = send_heartbeat() if internet_ok else None
+            # 2. Sequential CPU-bound task: Collect system metrics
+            # psutil.cpu_percent(interval=1) is blocking for 1 second. 
+            # Executing it sequentially prevents it from starving the ThreadPoolExecutor.
+            sys_metrics = get_system_metrics()
             
-            # 3. Handle State Machine Logic
+            # 3. Submit all I/O-bound tasks to run in parallel
+            # max_workers=4 because one conceptual worker is 'used' by the sequential CPU task.
+            # This ensures network tasks can proceed without being blocked by psutil.
+            with ThreadPoolExecutor(max_workers=4) as executor: 
+                future_services = executor.submit(check_services_health, executor)
+                future_internet = executor.submit(check_internet_and_ping)
+                future_containers = executor.submit(get_container_count)
+
+                # 4. Collect results from parallel tasks
+                services_health_full = future_services.result()
+                internet_ok, ping_ms = future_internet.result()
+                container_count = future_containers.result()
+            
+            # 5. Conditional Sequential Step: Send Heartbeat
+            worker_status = None
+            if internet_ok:
+                # Create a clean payload for the worker, containing only the status
+                services_payload_clean = {
+                    "services": {
+                        name: {"status": data["status"]} 
+                        for name, data in services_health_full.get("services", {}).items()
+                    }
+                }
+                worker_status = send_heartbeat(services_payload_clean)
+            
+            # 6. Handle State Machine Logic for n8n alerts
             if worker_status == transient_status:
                 transient_counter += 1
             else:
@@ -206,26 +281,34 @@ def main():
                 transient_status = worker_status
                 transient_counter = 1
 
-            # Check if the transient state has become stable
             if transient_counter >= STATE_CHANGE_THRESHOLD:
-                # A new stable state is confirmed. Check if it's different from the last stable state.
                 if transient_status != last_stable_status:
                     send_n8n_alert(last_stable_status, transient_status)
                     last_stable_status = transient_status
             
-            # 4. Save Metrics
-            cycle_duration_ms = (time.monotonic() - cycle_start_time) * 1000
+            # 7. Save Core Metrics
+            cycle_duration_ms = int((time.monotonic() - cycle_start_time) * 1000)
+            
+            # Format services data for DB and log
+            services_health_db_log_str = json.dumps(services_health_full.get("services", {}))
+
             all_metrics = {
-                "timestamp_lima": timestamp_lima, **get_system_metrics(), "container_count": get_container_count(),
-                "internet_ok": internet_ok, "ping_ms": ping_ms, "worker_status": worker_status, "cycle_duration_ms": cycle_duration_ms
+                "timestamp_lima": timestamp_lima, **sys_metrics, "container_count": container_count,
+                "internet_ok": internet_ok, "ping_ms": ping_ms, "worker_status": worker_status, 
+                "cycle_duration_ms": cycle_duration_ms,
+                "services_health": services_health_db_log_str
             }
             save_metrics_to_db(all_metrics)
 
-            # 5. Log success message
-            log_msg = (f"{timestamp_lima} - Metrics saved. "
-                       f"Current: {worker_status or 'N/A'}. "
-                       f"Transient: {transient_status or 'N/A'} ({transient_counter}/{STATE_CHANGE_THRESHOLD}). "
-                       f"Stable: {last_stable_status or 'N/A'}.")
+            # 8. Log cycle completion
+            services_for_log = services_health_full.get("services", {})
+            services_log_str = ", ".join([f'\"{name}\": {json.dumps(data)}' for name, data in services_for_log.items()])
+            
+            log_msg = (
+                f"{timestamp_lima} - Metrics saved.\n"
+                f"  Services: {services_log_str}\n"
+                f"  Worker Status: Current: {worker_status or 'N/A'}. Transient: {transient_status or 'N/A'} ({transient_counter}/{STATE_CHANGE_THRESHOLD}). Stable: {last_stable_status or 'N/A'}."
+            )
             print(log_msg)
 
         except Exception as e:
