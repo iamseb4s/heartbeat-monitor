@@ -71,6 +71,8 @@ To prevent false alarms from transient failures, the agent implements a simple s
 
 This mechanism ensures that only confirmed state changes are reported, not momentary fluctuations.
 
+Additionally, alert messages sent to n8n are now customized for each status code (`200`, `220`, `221`, `500`). For the `NULL` case (when the worker is unreachable), the message differentiates whether the cause is a lack of internet connectivity or specific inaccessibility of the worker API, providing more precise context.
+
 ## Data Persistence (Database)
 
 All metrics are stored in an SQLite database (`metrics.db`) with `WAL` mode enabled to improve write/read concurrency.

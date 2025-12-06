@@ -71,6 +71,8 @@ Para evitar falsas alarmas por fallos transitorios, el agente implementa una má
 
 Este mecanismo asegura que solo se notifiquen los cambios de estado confirmados, no las fluctuaciones momentáneas.
 
+Adicionalmente, los mensajes de alerta enviados a n8n ahora son personalizados para cada código de estado (`200`, `220`, `221`, `500`). Para el caso de `NULL` (cuando el worker no es contactable), el mensaje se diferencia si la causa es la falta de conexión a Internet o una inaccesibilidad específica de la API del worker, proporcionando un contexto más preciso.
+
 ## Persistencia de Datos (Base de Datos)
 
 Todas las métricas se almacenan en una base de datos SQLite (`metrics.db`) con el modo `WAL` activado para mejorar la concurrencia de escritura/lectura.
