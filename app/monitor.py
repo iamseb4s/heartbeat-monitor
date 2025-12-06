@@ -8,8 +8,39 @@ import psutil
 import pytz
 import docker
 import json
+import socket
+from requests.adapters import HTTPAdapter
+from urllib3.poolmanager import PoolManager
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
+
+# --- Force IPv4 for requests to avoid IPv6 DNS lookup delays in Docker/Alpine ---
+class IPv4Adapter(HTTPAdapter):
+    """Forces the connection to use only IPv4 to avoid IPv6 timeouts in Docker/Alpine."""
+    def init_poolmanager(self, connections, maxsize, block=False, **pool_kwargs):
+        self.poolmanager = PoolManager(
+            num_pools=connections, 
+            maxsize=maxsize, 
+            block=block, 
+            strict=True,
+            **pool_kwargs
+        )
+    def proxy_manager_for(self, proxy, **proxy_kwargs):
+        proxy_kwargs['socket_options'] = socket.AF_INET
+        return super().proxy_manager_for(proxy, **proxy_kwargs)
+    def get_connection(self, url, proxies=None):
+        conn = super().get_connection(url, proxies)
+        # Force the socket family to INET (IPv4)
+        if conn.conn_kw.get('socket_options') is None:
+             conn.conn_kw['family'] = socket.AF_INET
+        return conn
+
+# --- Global Reusable Session ---
+# This keeps connections alive (Keep-Alive) and avoids re-negotiating SSL each time.
+session = requests.Session()
+session.mount('https://', IPv4Adapter())
+session.mount('http://', IPv4Adapter())
+
 
 # --- Constants ---
 DB_FILE = Path("/app/data/metrics.db")
@@ -125,9 +156,8 @@ def save_metrics_to_db(metrics):
 # --- Metric & Health Check Functions ---
 def get_system_metrics():
     """Collects and rounds CPU, RAM, and Disk metrics."""
-    # psutil.cpu_percent(interval=1) is a blocking call that waits for 1 second.
-    # It's CPU-bound and is now called sequentially to avoid thread pool starvation.
-    cpu_percent = psutil.cpu_percent(interval=1) 
+    # interval=None makes this non-blocking. The first call will be 0.0 but will be accurate in the loop.
+    cpu_percent = psutil.cpu_percent(interval=None) 
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
     return {
@@ -149,7 +179,7 @@ def get_container_count():
 def check_internet_and_ping():
     """Checks for internet connectivity and measures latency."""
     try:
-        response = requests.head(PING_URL, timeout=2) # Timeout of 2 seconds for internet connectivity check
+        response = session.head(PING_URL, timeout=2)
         if response.status_code >= 200 and response.status_code < 400:
             return 1, int(response.elapsed.total_seconds() * 1000)
     except requests.exceptions.RequestException:
@@ -157,13 +187,10 @@ def check_internet_and_ping():
     return 0, None
 
 def _check_one_service(name, url):
-    """
-    Helper function to check a single service, capturing latency.
-    Adds 'Connection: close' header to prevent connection pooling issues.
-    """
-    headers = {'Connection': 'close'}
+    """Helper function to check a single service, capturing latency."""
     try:
-        response = requests.head(url, timeout=SERVICE_TIMEOUT_SECONDS, headers=headers)
+        # Use the global session object for IPv4 forcing and Keep-Alive
+        response = session.head(url, timeout=SERVICE_TIMEOUT_SECONDS)
         if response.status_code >= 200 and response.status_code < 400:
             latency_ms = response.elapsed.total_seconds() * 1000
             return name, {"status": "healthy", "latency_ms": int(latency_ms)}
@@ -196,7 +223,8 @@ def send_heartbeat(services_payload):
     
     headers = {"Authorization": f"Bearer {SECRET_KEY}", "Content-Type": "application/json"}
     try:
-        response = requests.post(HEARTBEAT_URL, headers=headers, json=services_payload, timeout=6)
+        # Use the global session object
+        response = session.post(HEARTBEAT_URL, headers=headers, json=services_payload, timeout=6)
         return response.status_code
     except requests.exceptions.RequestException as e:
         print(f"Heartbeat request failed: {e}")
@@ -209,9 +237,10 @@ def send_n8n_alert(previous_status, new_status):
         return
     title = "⚠️ Cambio de Estado en Heartbeat-Monitor ⚠️"
     message = f"El estado del worker ha cambiado de forma estable.\n\nNuevo Estado: `{new_status or 'N/A'}`\nEstado Anterior: `{previous_status or 'N/A'}`"
+    alert_payload = {"title": title, "message": message}
     try:
-        alert_payload = {"title": title, "message": message}
-        requests.post(N8N_WEBHOOK_URL, json=alert_payload, timeout=2)
+        # Use the global session object
+        session.post(N8N_WEBHOOK_URL, json=alert_payload, timeout=2)
         print(f"STATE CHANGE ALERT sent to n8n: {previous_status or 'N/A'} -> {new_status or 'N/A'}")
     except requests.exceptions.RequestException as e:
         print(f"Failed to send state change alert to n8n: {e}")
@@ -230,6 +259,9 @@ def main():
     last_stable_status = get_initial_stable_status()
     transient_status = last_stable_status
     transient_counter = 0
+    
+    # Initialize psutil.cpu_percent() before the loop to get a meaningful first reading
+    psutil.cpu_percent(interval=None)
     
     print(f"Starting monitoring loop. Initial stable state: {last_stable_status}. Monitoring services: {list(SERVICES_TO_CHECK.keys())}")
     
