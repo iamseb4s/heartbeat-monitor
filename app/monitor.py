@@ -36,7 +36,6 @@ class IPv4Adapter(HTTPAdapter):
         return conn
 
 # --- Global Reusable Session ---
-# This keeps connections alive (Keep-Alive) and avoids re-negotiating SSL each time.
 session = requests.Session()
 session.mount('https://', IPv4Adapter())
 session.mount('http://', IPv4Adapter())
@@ -47,7 +46,7 @@ DB_FILE = Path("/app/data/metrics.db")
 LOOP_INTERVAL_SECONDS = 10
 LIMA_TZ = pytz.timezone('America/Lima')
 PING_URL = "http://www.google.com"
-STATE_CHANGE_THRESHOLD = 4 # Number of consecutive identical statuses to consider a state "stable"
+STATUS_CHANGE_THRESHOLD = 4 # Number of consecutive identical statuses to consider a state "stable"
 SERVICE_TIMEOUT_SECONDS = 2 # Global timeout for service health checks (in seconds)
 
 # --- Environment Variables & Dynamic Config ---
@@ -76,10 +75,8 @@ def parse_services_from_env():
 
 SERVICES_TO_CHECK = parse_services_from_env()
 
-# --- Global State for Alerting ---
-last_stable_status = None
-transient_status = None
-transient_counter = 0
+# --- Unified State Management ---
+global_states = {}
 
 # --- Database Functions ---
 def initialize_database():
@@ -120,22 +117,6 @@ def initialize_database():
         print(f"Database error during initialization: {e}")
         raise
 
-def get_initial_stable_status():
-    """Retrieves the last known worker_status from the DB to set the initial stable state."""
-    try:
-        if not DB_FILE.exists():
-            return None
-        con = sqlite3.connect(DB_FILE, timeout=5)
-        cur = con.cursor()
-        cur.execute("SELECT worker_status FROM metrics ORDER BY timestamp_lima DESC LIMIT 1;")
-        result = cur.fetchone()
-        con.close()
-        # The status can be an integer or None, which is what we want
-        return result[0] if result else None
-    except Exception as e:
-        print(f"Could not determine initial state from DB, assuming None. Error: {e}")
-        return None
-
 def save_metrics_to_db(metrics):
     """Saves a dictionary of metrics to the SQLite database."""
     try:
@@ -156,7 +137,6 @@ def save_metrics_to_db(metrics):
 # --- Metric & Health Check Functions ---
 def get_system_metrics():
     """Collects and rounds CPU, RAM, and Disk metrics."""
-    # interval=None makes this non-blocking. The first call will be 0.0 but will be accurate in the loop.
     cpu_percent = psutil.cpu_percent(interval=None) 
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
@@ -230,82 +210,120 @@ def send_heartbeat(services_payload):
         print(f"Heartbeat request failed: {e}")
         return None
 
-def send_n8n_alert(previous_status, new_status, internet_ok):
-    """Sends a formatted, customized alert to the n8n webhook for a confirmed state change."""
+def send_notification(item_name, new_status, old_status, internet_ok=True):
+    """Sends a formatted, customized alert to the n8n webhook for any state change."""
     if not N8N_WEBHOOK_URL:
         print("Warning: N8N_WEBHOOK_URL is not set. Could not send alert.")
         return
 
-    # Handle NULL status with more context first
-    if new_status is None:
-        if not internet_ok:
-            title = "🔥 Error Crítico (Sin Internet): Heartbeat-Monitor"
-            message = f"No se pudo contactar la API del worker porque no hay conexión a internet en el servidor.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`"
-        else:
-            title = "🔥 Error Crítico (API Inaccesible): Heartbeat-Monitor"
-            message = f"No se pudo contactar la API del worker, a pesar de tener conexión a internet. La API del worker podría estar caída.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`"
-        
-        alert_payload = {"title": title, "message": message}
-    else:
-        # Define titles and messages for numeric statuses
-        status_map = {
-            200: {
-                "title": "✅ Recuperación: Heartbeat-Monitor",
-                "message": f"El servicio se ha recuperado y funciona correctamente.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Éxito)"
-            },
-            220: {
-                "title": "⚠️ Advertencia (Ciego): Heartbeat-Monitor",
-                "message": f"El latido fue recibido, pero la API no pudo leer su estado anterior. No se pueden detectar recuperaciones.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Advertencia)"
-            },
-            221: {
-                "title": "⚠️ Advertencia (Fallo en Actualización): Heartbeat-Monitor",
-                "message": f"Se detectó una recuperación, pero la API falló al actualizar su estado o enviar la notificación de recuperación.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Advertencia)"
-            },
-            500: {
-                "title": "🔥 Error Crítico (Worker): Heartbeat-Monitor",
-                "message": f"La API del worker encontró un error interno crítico y no pudo procesar el latido.\n\n- **Estado Anterior:** `{previous_status or 'N/A'}`\n- **Nuevo Estado:** `{new_status}` (Error de Worker)"
-            }
-        }
-        
-        # Default message for any other status code
-        default_info = {
-            "title": f"ℹ️ Cambio de Estado: Heartbeat-Monitor",
-            "message": f"El estado del worker ha cambiado de forma estable.\n\n- **Nuevo Estado:** `{new_status or 'N/A'}`\n- **Estado Anterior:** `{previous_status or 'N/A'}`"
-        }
+    title = ""
+    message = ""
+    old_status_str = f"`{old_status or 'N/A'}`"
+    new_status_str = f"`{new_status or 'N/A'}`"
 
-        alert_info = status_map.get(new_status, default_info)
-        alert_payload = {"title": alert_info["title"], "message": alert_info["message"]}
+    if item_name == 'worker':
+        if new_status is None:
+            cause = "sin conexión a internet" if not internet_ok else "API del worker inaccesible"
+            title = f"📡 Sin Conexión con Worker | Heartbeat-Monitor"
+            message = f"No se pudo contactar la API del worker.\n\n- **Causa probable**: {cause}.\n- **Último estado conocido**: {old_status_str}"
+        else:
+            status_map = {
+                200: {
+                    "title": "✅ Worker Recuperado | Heartbeat-Monitor",
+                    "message": f"La comunicación con el worker se ha restablecido.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                },
+                220: {
+                    "title": "⚠️ Advertencia (Ciego) | Heartbeat-Monitor",
+                    "message": f"El worker recibió el latido, pero no pudo leer su estado anterior.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                },
+                221: {
+                    "title": "⚠️ Advertencia (Fallo en Actualización) | Heartbeat-Monitor",
+                    "message": f"Se detectó recuperación, pero el worker falló al actualizar su estado.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                },
+                500: {
+                    "title": "🔥 Error de Worker | Heartbeat-Monitor",
+                    "message": f"La API del worker reporta un error interno.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                }
+            }
+            default_info = {
+                "title": f"ℹ️ Cambio de Estado | Heartbeat-Monitor",
+                "message": f"El estado del worker ha cambiado de forma inesperada.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+            }
+            alert_info = status_map.get(new_status, default_info)
+            title = alert_info["title"]
+            message = alert_info["message"]
+    else:  # It's a service
+        if new_status == 'healthy':
+            title = f"✅ Servicio Recuperado: {item_name}"
+            message = f"El servicio **{item_name}** vuelve a estar operativo.\n\n**Transición**: `{old_status}` -> `{new_status}`"
+        else:  # Unhealthy or other
+            title = f"❌ Servicio Caído: {item_name}"
+            message = f"El servicio **{item_name}** ha dejado de responder.\n\n**Transición**: `{old_status}` -> `{new_status}`"
 
     try:
-        # Use the global session object
-        session.post(N8N_WEBHOOK_URL, json=alert_payload, timeout=2)
-        print(f"STATE CHANGE ALERT sent to n8n: {previous_status or 'N/A'} -> {new_status or 'N/A'}")
+        session.post(N8N_WEBHOOK_URL, json={"title": title, "message": message}, timeout=2)
+        print(f"STATE CHANGE ALERT sent for '{item_name}': {old_status or 'N/A'} -> {new_status or 'N/A'}")
     except requests.exceptions.RequestException as e:
-        print(f"Failed to send state change alert to n8n: {e}")
+        print(f"Failed to send state change alert for '{item_name}': {e}")
+
+
+def check_state_change(item_name, current_status, immediate_notify_statuses):
+    """
+    Generic state change processor. Returns an action and the old status if a notification is needed.
+    Actions: 'NOTIFY_RECOVERY', 'NOTIFY_DOWN', or None
+    """
+    # Initialize state for new items
+    if item_name not in global_states:
+        global_states[item_name] = {
+            'last_stable_status': current_status,
+            'transient_status': current_status,
+            'transient_counter': 1
+        }
+        return None, None
+
+    state = global_states[item_name]
+    old_stable_status = state['last_stable_status']
+
+    # Update transient state
+    if current_status == state['transient_status']:
+        state['transient_counter'] += 1
+    else:
+        state['transient_status'] = current_status
+        state['transient_counter'] = 1
+
+    # Check for state changes that require notification
+    action = None
+    if state['transient_status'] != old_stable_status:
+        # Recovery condition
+        if state['transient_status'] in immediate_notify_statuses:
+            action = 'NOTIFY_RECOVERY'
+        # "Down" condition
+        elif state['transient_counter'] >= STATUS_CHANGE_THRESHOLD:
+            action = 'NOTIFY_DOWN'
+        
+        if action:
+            state['last_stable_status'] = state['transient_status']
+            return action, old_stable_status
+            
+    return None, None
 
 # --- Main Execution ---
 def main():
     """Main monitoring loop with parallel data collection."""
-    global last_stable_status, transient_status, transient_counter
-    
     initialize_database()
     
     if not SERVICES_TO_CHECK:
         print("CRITICAL: No services configured. Please set SERVICE_NAMES and SERVICE_URL_* environment variables.")
         return
 
-    last_stable_status = get_initial_stable_status()
-    transient_status = last_stable_status
-    transient_counter = 0
-    
     # Initialize psutil.cpu_percent() before the loop to get a meaningful first reading
     psutil.cpu_percent(interval=None)
     
-    print(f"Starting monitoring loop. Initial stable state: {last_stable_status}. Monitoring services: {list(SERVICES_TO_CHECK.keys())}")
+    print(f"Starting monitoring loop. Monitoring services: {list(SERVICES_TO_CHECK.keys())}")
     
     while True:
         try:
-            # 1. Clock-Aligned Execution
+            # --- Align with Main Loop Grid ---
             current_time = time.time()
             wait_seconds = LOOP_INTERVAL_SECONDS - (current_time % LOOP_INTERVAL_SECONDS)
             time.sleep(wait_seconds)
@@ -313,25 +331,20 @@ def main():
             cycle_start_time = time.monotonic()
             timestamp_lima = datetime.datetime.now(LIMA_TZ).isoformat()
 
-            # 2. Sequential CPU-bound task: Collect system metrics
-            # psutil.cpu_percent(interval=1) is blocking for 1 second. 
-            # Executing it sequentially prevents it from starving the ThreadPoolExecutor.
+            # --- Collect System-Level Metrics ---
             sys_metrics = get_system_metrics()
             
-            # 3. Submit all I/O-bound tasks to run in parallel
-            # max_workers=4 because one conceptual worker is 'used' by the sequential CPU task.
-            # This ensures network tasks can proceed without being blocked by psutil.
+            # --- Run I/O-Bound Checks in Parallel ---
             with ThreadPoolExecutor(max_workers=4) as executor: 
                 future_services = executor.submit(check_services_health, executor)
                 future_internet = executor.submit(check_internet_and_ping)
                 future_containers = executor.submit(get_container_count)
 
-                # 4. Collect results from parallel tasks
                 services_health_full = future_services.result()
                 internet_ok, ping_ms = future_internet.result()
                 container_count = future_containers.result()
             
-            # 5. Conditional Sequential Step: Send Heartbeat
+            # --- Send Heartbeat to Worker ---
             worker_status = None
             if internet_ok:
                 # Create a clean payload for the worker, containing only the status
@@ -342,26 +355,23 @@ def main():
                     }
                 }
                 worker_status = send_heartbeat(services_payload_clean)
-            
-            # 6. Handle State Machine Logic for n8n alerts
-            if worker_status == transient_status:
-                transient_counter += 1
-            else:
-                # The status has changed from the last cycle, reset counter and update transient status
-                transient_status = worker_status
-                transient_counter = 1
 
-            if transient_counter >= STATE_CHANGE_THRESHOLD:
-                if transient_status != last_stable_status:
-                    send_n8n_alert(last_stable_status, transient_status)
-                    last_stable_status = transient_status
+            # --- Unified State Processing ---
+            # Process Worker Status
+            action, old_status = check_state_change('worker', worker_status, [200])
+            if action:
+                send_notification('worker', worker_status, old_status, internet_ok)
             
-            # 7. Save Core Metrics
+            # Process Individual Service Statuses
+            for name, health_data in services_health_full.get("services", {}).items():
+                service_status = health_data['status']
+                action, old_status = check_state_change(name, service_status, ['healthy'])
+                if action:
+                    send_notification(name, service_status, old_status)
+
+            # --- Save & Log ---
             cycle_duration_ms = int((time.monotonic() - cycle_start_time) * 1000)
-            
-            # Format services data for DB and log
             services_health_db_log_str = json.dumps(services_health_full.get("services", {}))
-
             all_metrics = {
                 "timestamp_lima": timestamp_lima, **sys_metrics, "container_count": container_count,
                 "internet_ok": internet_ok, "ping_ms": ping_ms, "worker_status": worker_status, 
@@ -370,14 +380,14 @@ def main():
             }
             save_metrics_to_db(all_metrics)
 
-            # 8. Log cycle completion
-            services_for_log = services_health_full.get("services", {})
-            services_log_str = ", ".join([f'\"{name}\": {json.dumps(data)}' for name, data in services_for_log.items()])
-            
+            # --- Log Cycle Summary ---
+            services_log_str = ", ".join([f'\"{name}\": {json.dumps(data)}' for name, data in services_health_full.get("services", {}).items()])
+            worker_log = global_states.get('worker', {})
             log_msg = (
                 f"{timestamp_lima} - Metrics saved.\n"
                 f"  Services: {services_log_str}\n"
-                f"  Worker Status: Current: {worker_status or 'N/A'}. Transient: {transient_status or 'N/A'} ({transient_counter}/{STATE_CHANGE_THRESHOLD}). Stable: {last_stable_status or 'N/A'}."
+                f"  Worker Status: Current: {worker_status or 'N/A'}. Stable: {worker_log.get('last_stable_status', 'N/A')}. "
+                f"Transient: {worker_log.get('transient_status', 'N/A')} ({worker_log.get('transient_counter', 0)}/{STATUS_CHANGE_THRESHOLD})."
             )
             print(log_msg)
 
