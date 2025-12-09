@@ -17,30 +17,25 @@ Cada ciclo de ejecución sigue un modelo de concurrencia para optimizar el tiemp
     * `get_container_count`: Se conecta al socket de Docker para contar los contenedores activos.
 3. **Recopilación de Resultados:** El script espera a que todas las tareas concurrentes finalicen antes de continuar.
 4. **Envío de Latido (Heartbeat):** Con los resultados de las comprobaciones, se construye y envía un payload al `HEARTBEAT_URL`.
-5. **Persistencia en Base de Datos:** Finalmente, todas las métricas y resultados del ciclo se guardan en la base de datos SQLite.
+5. **Procesamiento de Estado y Alertas**: Se analiza el estado del worker y de cada servicio para determinar si se ha producido un cambio de estado estable que requiera una notificación.
+6. **Persistencia en Base de Datos:** Finalmente, todas las métricas y resultados del ciclo se guardan en la base de datos SQLite.
 
-### Estimación del Tiempo de Ciclo en el Peor de los Casos
+### Estimación del Tiempo de Ciclo
 
-El uso de `ThreadPoolExecutor` significa que el tiempo de la fase de I/O está determinado por la tarea más lenta, no por la suma de todas.
-
-* **Escenario Normal:** Todas las comprobaciones de red responden rápidamente (ej., < 300ms). El ciclo completo debería durar menos de 1 segundo.
-* **Peor Escenario (Timeout de Servicio):** Si uno o más servicios no responden, la función `_check_one_service` tardará el tiempo definido en `SERVICE_TIMEOUT_SECONDS` (actualmente 2 segundos). El `ThreadPoolExecutor` esperará estos 2 segundos.
-* **Peor Escenario (Timeout de Heartbeat):** El envío del latido tiene su propio timeout de 6 segundos.
-
-Por lo tanto, la duración máxima teórica de un ciclo es aproximadamente **`SERVICE_TIMEOUT_SECONDS` + `timeout_del_heartbeat`**, lo que podría llegar a unos 8 segundos en un caso extremo de fallo en cascada. El `cycle_duration_ms` guardado en la base de datos registra la duración real de cada ciclo para su análisis.
+El uso de `ThreadPoolExecutor` significa que el tiempo de la fase de I/O está determinado por la tarea más lenta, no por la suma de todas. El `cycle_duration_ms` guardado en la base de datos registra la duración real de cada ciclo para su análisis.
 
 ## Monitorización de Servicios
 
-La funcionalidad principal del agente es monitorizar el estado de múltiples servicios web y reportarlo.
+La funcionalidad principal del agente es monitorizar el estado de múltiples servicios web, reportarlo al worker y generar alertas si su estado cambia de forma persistente.
 
 ### Configuración Dinámica
 
-Los servicios a monitorizar no están codificados en el script. Se configuran dinámicamente a través de variables de entorno, siguiendo un patrón específico:
+Los servicios a monitorizar no están codificados en el script. Se configuran dinámicamente a través de variables de entorno:
 
-1. **`SERVICE_NAMES`**: Una lista de nombres de servicio separados por comas.
-    * Ejemplo: `SERVICE_NAMES=nextjs,strapi,umami`
-2. **`SERVICE_URL_{name}`**: La URL a comprobar para cada nombre de servicio definido.
-    * Ejemplo: `SERVICE_URL_nextjs=https://www.example.com`, `SERVICE_URL_strapi=https://api.example.com`
+1. **`SERVICE_NAMES`**: Una lista de nombres de servicio separados por comas (ej: `SERVICE_NAMES=nextjs,strapi,umami`).
+2. **`SERVICE_URL_{name}`**: La URL a comprobar para cada nombre de servicio definido (ej: `SERVICE_URL_nextjs=https://www.example.com`).
+
+Un servicio se considera `"healthy"` si responde con un código de estado `2xx` o `3xx`. De lo contrario, se marca como `"unhealthy"`.
 
 ### Payload de Estado de Salud
 
@@ -58,20 +53,28 @@ En cada ciclo, el agente construye un payload JSON que resume el estado de salud
     }
     ```
 
-* Un servicio se considera `"healthy"` si responde con un código de estado `2xx` o `3xx`. De lo contrario, se marca como `"unhealthy"`.
-
 ## Gestión de Estado y Alertas
 
-Para evitar falsas alarmas por fallos transitorios, el agente implementa una máquina de estados simple antes de enviar alertas al webhook de n8n.
+Para evitar falsas alarmas por fallos transitorios y gestionar las notificaciones de forma centralizada, el agente implementa una **arquitectura de estado unificada**.
 
-* **`last_stable_status`**: Almacena el último código de estado del worker que se ha mantenido estable. Se recupera de la base de datos al iniciar para persistir el estado entre reinicios.
-* **`transient_status`**: Almacena el estado observado en el ciclo actual.
-* **`transient_counter`**: Cuenta cuántos ciclos consecutivos se ha observado el `transient_status`.
-* **`STATE_CHANGE_THRESHOLD`**: Si el `transient_counter` alcanza este umbral (actualmente 4 ciclos), el estado se considera "estable". Si este nuevo estado estable es diferente del `last_stable_status`, se envía una alerta a n8n y se actualiza el `last_stable_status`.
+Toda la lógica de estado se gestiona a través de una única función genérica, `check_state_change`, y se almacena en un diccionario global en memoria, `global_states`. Este enfoque permite monitorear cualquier item (el worker principal o servicios individuales) usando las mismas reglas, evitando la duplicación de código.
 
-Este mecanismo asegura que solo se notifiquen los cambios de estado confirmados, no las fluctuaciones momentáneas.
+### Lógica de Notificación
 
-Adicionalmente, los mensajes de alerta enviados a n8n ahora son personalizados para cada código de estado (`200`, `220`, `221`, `500`). Para el caso de `NULL` (cuando el worker no es contactable), el mensaje se diferencia si la causa es la falta de conexión a Internet o una inaccesibilidad específica de la API del worker, proporcionando un contexto más preciso.
+El sistema envía alertas al `N8N_WEBHOOK_URL` (el único canal para todas las notificaciones) bajo las siguientes condiciones:
+
+1. **Caída de un Servicio:**
+    * Si un servicio reporta un estado `unhealthy` durante `STATUS_CHANGE_THRESHOLD` (actualmente 4) ciclos consecutivos, se envía una alerta de "Servicio Caído".
+
+2. **Recuperación de un Servicio:**
+    * Si un servicio que estaba caído reporta `healthy` **una sola vez**, se envía una alerta de "Servicio Recuperado" de forma inmediata.
+
+3. **Cambio de Estado del Worker:**
+    * Utiliza el mismo umbral `STATUS_CHANGE_THRESHOLD` para confirmar un cambio de estado estable (ej. de `200` a `500`).
+    * La recuperación a un estado `200` se notifica de inmediato.
+    * Los mensajes de alerta son personalizados para cada código de estado (`200`, `220`, `221`, `500`) y para los casos en que el worker es inaccesible (debido a falta de internet o a un fallo de la API), proporcionando un contexto más preciso.
+
+Este mecanismo asegura que solo se notifiquen los cambios de estado confirmados, aplicando una lógica consistente a todos los elementos monitoreados.
 
 ## Persistencia de Datos (Base de Datos)
 

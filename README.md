@@ -17,30 +17,25 @@ Each execution cycle follows a concurrent model to optimize time and prevent blo
     * `get_container_count`: Connects to the Docker socket to count active containers.
 3. **Result Collection:** The script waits for all concurrent tasks to complete before proceeding.
 4. **Heartbeat Transmission:** With the results from the checks, a payload is constructed and sent to the `HEARTBEAT_URL`.
-5. **Database Persistence:** Finally, all metrics and results from the cycle are saved to the SQLite database.
+5. **State and Alert Processing:** The status of the worker and each service is analyzed to determine if a stable state change has occurred that requires a notification.
+6. **Database Persistence:** Finally, all metrics and results from the cycle are saved to the SQLite database.
 
-### Worst-Case Cycle Time Estimation
+### Cycle Time Estimation
 
-The use of `ThreadPoolExecutor` means that the duration of the I/O phase is determined by the slowest task, not the sum of all tasks.
-
-* **Normal Scenario:** All network checks respond quickly (e.g., < 300ms). The entire cycle should take less than 1 second.
-* **Worst-Case Scenario (Service Timeout):** If one or more services fail to respond, the `_check_one_service` function will take the time defined in `SERVICE_TIMEOUT_SECONDS` (currently 2 seconds). The `ThreadPoolExecutor` will wait for these 2 seconds.
-* **Worst-Case Scenario (Heartbeat Timeout):** The heartbeat transmission has its own timeout of 6 seconds.
-
-Therefore, the maximum theoretical duration of a cycle is approximately **`SERVICE_TIMEOUT_SECONDS` + `heartbeat_timeout`**, which could reach about 8 seconds in an extreme cascading failure scenario. The `cycle_duration_ms` stored in the database records the actual duration of each cycle for analysis.
+The use of `ThreadPoolExecutor` means that the duration of the I/O phase is determined by the slowest task, not the sum of all tasks. The `cycle_duration_ms` stored in the database records the actual duration of each cycle for analysis.
 
 ## Service Monitoring
 
-The agent's primary functionality is to monitor the status of multiple web services and report it.
+The agent's primary functionality is to monitor the status of multiple web services, report it to the worker, and generate alerts if their status changes persistently.
 
 ### Dynamic Configuration
 
-The services to be monitored are not hard-coded. They are configured dynamically via environment variables, following a specific pattern:
+The services to be monitored are not hard-coded. They are configured dynamically via environment variables:
 
-1. **`SERVICE_NAMES`**: A comma-separated list of service names.
-    * Example: `SERVICE_NAMES=nextjs,strapi,umami`
-2. **`SERVICE_URL_{name}`**: The URL to check for each defined service name.
-    * Example: `SERVICE_URL_nextjs=https://www.example.com`, `SERVICE_URL_strapi=https://api.example.com`
+1. **`SERVICE_NAMES`**: A comma-separated list of service names (e.g., `SERVICE_NAMES=nextjs,strapi,umami`).
+2. **`SERVICE_URL_{name}`**: The URL to check for each defined service name (e.g., `SERVICE_URL_nextjs=https://www.example.com`).
+
+A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Otherwise, it is marked as `"unhealthy"`.
 
 ### Health Status Payload
 
@@ -58,20 +53,28 @@ In each cycle, the agent constructs a JSON payload summarizing the health status
     }
     ```
 
-* A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Otherwise, it is marked as `"unhealthy"`.
-
 ## State Management and Alerting
 
-To prevent false alarms from transient failures, the agent implements a simple state machine before sending alerts to the n8n webhook.
+To prevent false alarms from transient failures and to centralize notifications, the agent implements a **unified state architecture**.
 
-* **`last_stable_status`**: Stores the last worker status code that has remained stable. It is retrieved from the database on startup to persist state across restarts.
-* **`transient_status`**: Stores the status observed in the current cycle.
-* **`transient_counter`**: Counts how many consecutive cycles the `transient_status` has been observed.
-* **`STATE_CHANGE_THRESHOLD`**: If the `transient_counter` reaches this threshold (currently 4 cycles), the status is considered "stable." If this new stable status differs from `last_stable_status`, an alert is sent to n8n, and `last_stable_status` is updated.
+All state logic is managed through a single generic function, `check_state_change`, and stored in a global in-memory dictionary, `global_states`. This approach allows monitoring any item (the main worker or individual services) using the same rules, avoiding code duplication.
 
-This mechanism ensures that only confirmed state changes are reported, not momentary fluctuations.
+### Notification Logic
 
-Additionally, alert messages sent to n8n are now customized for each status code (`200`, `220`, `221`, `500`). For the `NULL` case (when the worker is unreachable), the message differentiates whether the cause is a lack of internet connectivity or specific inaccessibility of the worker API, providing more precise context.
+The system sends alerts to the `N8N_WEBHOOK_URL` (the sole channel for all notifications) under the following conditions:
+
+1. **Service Downtime:**
+    * If a service reports an `unhealthy` status for `STATUS_CHANGE_THRESHOLD` (currently 4) consecutive cycles, a "Service Down" alert is sent.
+
+2. **Service Recovery:**
+    * If a service that was down reports `healthy` **just once**, a "Service Recovered" alert is sent immediately.
+
+3. **Worker Status Change:**
+    * Uses the same `STATUS_CHANGE_THRESHOLD` to confirm a stable state change (e.g., from `200` to `500`).
+    * Recovery to a `200` status is notified immediately.
+    * Alert messages are customized for each status code (`200`, `220`, `221`, `500`) and for cases where the worker is unreachable (due to lack of internet or API failure), providing more precise context.
+
+This mechanism ensures that only confirmed state changes are notified, applying consistent logic to all monitored elements.
 
 ## Data Persistence (Database)
 
