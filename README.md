@@ -37,6 +37,14 @@ The services to be monitored are not hard-coded. They are configured dynamically
 
 A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Otherwise, it is marked as `"unhealthy"`.
 
+### Latency Optimization (DNS Override)
+
+For environments where services reside on the same local network or server (e.g., Docker containers behind an Nginx on the host), the agent allows configuring a DNS override IP (`INTERNAL_DNS_OVERRIDE_IP`) to drastically reduce latency.
+
+* **How it Works:** If this variable is defined, the agent will intercept requests to monitored services, resolve the domain directly to the specified IP, force the use of HTTP (avoiding unnecessary SSL handshake on the internal network), and inject the correct `Host` header.
+* **Benefit:** Reduces latency from ~50ms to ~1-3ms by bypassing external DNS resolution and public routing.
+* **Configuration:** See `INTERNAL_DNS_OVERRIDE_IP` variable in `.env`.
+
 ### Health Status Payload
 
 In each cycle, the agent constructs a JSON payload summarizing the health status of the services and sends it to the `HEARTBEAT_URL`.

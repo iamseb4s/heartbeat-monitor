@@ -37,6 +37,14 @@ Los servicios a monitorizar no están codificados en el script. Se configuran di
 
 Un servicio se considera `"healthy"` si responde con un código de estado `2xx` o `3xx`. De lo contrario, se marca como `"unhealthy"`.
 
+### Optimización de Latencia (DNS Override)
+
+Para entornos donde los servicios residen en la misma red local o servidor (ej: contenedores Docker detrás de un Nginx en el host), el agente permite configurar una IP de anulación de DNS (`INTERNAL_DNS_OVERRIDE_IP`) para reducir drásticamente la latencia.
+
+* **Funcionamiento:** Si se define esta variable, el agente interceptará las peticiones a los servicios monitorizados, resolverá el dominio directamente a la IP especificada, forzará el uso de HTTP (evitando el handshake SSL innecesario en la red interna) e inyectará el encabezado `Host` correcto.
+* **Beneficio:** Reduce la latencia de ~50ms a ~1-3ms al saltarse la resolución DNS externa y el enrutamiento público.
+* **Configuración:** Ver variable `INTERNAL_DNS_OVERRIDE_IP` en `.env`.
+
 ### Payload de Estado de Salud
 
 En cada ciclo, el agente construye un payload JSON que resume el estado de salud de los servicios y lo envía al `HEARTBEAT_URL`.
