@@ -11,6 +11,7 @@ import json
 import socket
 from requests.adapters import HTTPAdapter
 from urllib3.poolmanager import PoolManager
+from urllib.parse import urlparse
 from pathlib import Path
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
@@ -53,6 +54,7 @@ SERVICE_TIMEOUT_SECONDS = 2 # Global timeout for service health checks (in secon
 SECRET_KEY = os.getenv('SECRET_KEY')
 HEARTBEAT_URL = os.getenv('HEARTBEAT_URL')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
+INTERNAL_DNS_OVERRIDE_IP = os.getenv('INTERNAL_DNS_OVERRIDE_IP')
 
 def parse_services_from_env():
     """Parses service configuration from environment variables."""
@@ -134,6 +136,44 @@ def save_metrics_to_db(metrics):
     except sqlite3.Error as e:
         print(f"Database error when saving metrics: {e}")
 
+# --- Helper Functions ---
+def smart_request(method, url, **kwargs):
+    """
+    Executes an HTTP request via the global session. 
+    If INTERNAL_DNS_OVERRIDE_IP is set and the host matches a monitored service,
+    it forces a direct IP connection (HTTP) with Host header injection.
+    """
+    if not url:
+        return None
+
+    clean_url = url.strip().strip('"').strip("'")
+    parsed = urlparse(clean_url)
+    hostname = parsed.hostname or ""
+    
+    target_url = clean_url
+    headers = kwargs.pop('headers', {}) or {}
+    
+    # Check if we should override: IP is set AND host matches a monitored service
+    should_override = False
+    if INTERNAL_DNS_OVERRIDE_IP and SERVICES_TO_CHECK:
+         for svc_url in SERVICES_TO_CHECK.values():
+             if hostname in svc_url:
+                 should_override = True
+                 break
+
+    if should_override:
+        # Rewrite URL: use IP directly and force HTTP
+        target_url = clean_url.replace(hostname, INTERNAL_DNS_OVERRIDE_IP).replace("https://", "http://")
+        
+        # Set original Host header
+        headers['Host'] = hostname
+        
+        # Direct IP connection settings
+        kwargs['verify'] = False
+        kwargs['allow_redirects'] = False
+    
+    return session.request(method, target_url, headers=headers, **kwargs)
+
 # --- Metric & Health Check Functions ---
 def get_system_metrics():
     """Collects and rounds CPU, RAM, and Disk metrics."""
@@ -169,9 +209,10 @@ def check_internet_and_ping():
 def _check_one_service(name, url):
     """Helper function to check a single service, capturing latency."""
     try:
-        # Use the global session object for IPv4 forcing and Keep-Alive
-        response = session.head(url, timeout=SERVICE_TIMEOUT_SECONDS)
-        if response.status_code >= 200 and response.status_code < 400:
+        response = smart_request('HEAD', url, timeout=SERVICE_TIMEOUT_SECONDS)
+        
+        # Consider 2xx (OK) and 3xx (Redirects) as healthy
+        if 200 <= response.status_code < 400:
             latency_ms = response.elapsed.total_seconds() * 1000
             return name, {"status": "healthy", "latency_ms": int(latency_ms)}
     except requests.exceptions.RequestException as e:
@@ -203,8 +244,7 @@ def send_heartbeat(services_payload):
     
     headers = {"Authorization": f"Bearer {SECRET_KEY}", "Content-Type": "application/json"}
     try:
-        # Use the global session object
-        response = session.post(HEARTBEAT_URL, headers=headers, json=services_payload, timeout=6)
+        response = smart_request('POST', HEARTBEAT_URL, headers=headers, json=services_payload, timeout=6)
         return response.status_code
     except requests.exceptions.RequestException as e:
         print(f"Heartbeat request failed: {e}")
@@ -261,7 +301,7 @@ def send_notification(item_name, new_status, old_status, internet_ok=True):
             message = f"El servicio **{item_name}** ha dejado de responder.\n\n**Transición**: `{old_status}` -> `{new_status}`"
 
     try:
-        session.post(N8N_WEBHOOK_URL, json={"title": title, "message": message}, timeout=2)
+        smart_request('POST', N8N_WEBHOOK_URL, json={"title": title, "message": message}, timeout=2)
         print(f"STATE CHANGE ALERT sent for '{item_name}': {old_status or 'N/A'} -> {new_status or 'N/A'}")
     except requests.exceptions.RequestException as e:
         print(f"Failed to send state change alert for '{item_name}': {e}")
