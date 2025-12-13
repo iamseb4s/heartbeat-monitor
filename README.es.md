@@ -42,20 +42,25 @@ Un servicio se considera `"healthy"` si responde con un código `2xx` o `3xx`. D
 El monitor soporta características avanzadas para cubrir casos de uso complejos, como servicios internos o endpoints protegidos.
 
 #### 1. Monitoreo Directo de Contenedores (`docker:`)
+
 Para servicios de infraestructura (como Nginx, túneles, bases de datos) que no exponen un puerto HTTP accesible fácilmente, puedes usar el protocolo `docker:`. Esto verifica directamente si el contenedor está en estado `running`.
 
-*   **Sintaxis:** `SERVICE_URL_<nombre>="docker:<nombre_del_contenedor>"`
-*   **Ejemplo:**
+* **Sintaxis:** `SERVICE_URL_<nombre>="docker:<nombre_del_contenedor>"`
+* **Ejemplo:**
+
     ```bash
     SERVICE_URL_nginx="docker:mi-contenedor-nginx"
     ```
-*   **Nota:** Requiere que el agente tenga acceso al socket de Docker (`/var/run/docker.sock`), lo cual ya está configurado por defecto en el `docker-compose.yml`.
+
+* **Nota:** Requiere que el agente tenga acceso al socket de Docker (`/var/run/docker.sock`), lo cual ya está configurado por defecto en el `docker-compose.yml`.
 
 #### 2. Headers HTTP Personalizados
+
 Algunos endpoints de salud requieren autenticación o headers específicos para responder correctamente. Puedes definirlos usando variables de entorno con el prefijo `SERVICE_HEADERS_`.
 
-*   **Sintaxis:** `SERVICE_HEADERS_<nombre>="Header1:Valor1,Header2:Valor2"`
-*   **Ejemplo:**
+* **Sintaxis:** `SERVICE_HEADERS_<nombre>="Header1:Valor1,Header2:Valor2"`
+* **Ejemplo:**
+
     ```bash
     # Verifica un endpoint que requiere un token o flag especial
     SERVICE_URL_api="https://mi-api.com/health"
@@ -94,18 +99,20 @@ Toda la lógica de estado se gestiona a través de una única función genérica
 
 ### Lógica de Notificación
 
-El sistema envía alertas al `N8N_WEBHOOK_URL` (el único canal para todas las notificaciones) bajo las siguientes condiciones:
+El sistema envía alertas al `N8N_WEBHOOK_URL` bajo las siguientes condiciones, incluyendo ahora mecanismos de robustez y detalle:
 
-1. **Caída de un Servicio:**
-    * Si un servicio reporta un estado `unhealthy` durante `STATUS_CHANGE_THRESHOLD` (actualmente 4) ciclos consecutivos, se envía una alerta de "Servicio Caído".
+1. **Robustez y Reintentos:**
+    * Si el envío de la alerta falla (por ejemplo, timeout del webhook), el sistema reintenta automáticamente hasta **3 veces** antes de desistir, asegurando que las alertas críticas lleguen a su destino.
 
-2. **Recuperación de un Servicio:**
-    * Si un servicio que estaba caído reporta `healthy` **una sola vez**, se envía una alerta de "Servicio Recuperado" de forma inmediata.
+2. **Alertas Enriquecidas:**
+    * **Servicio Caído:** Incluye la razón específica del fallo (ej: `HTTP 500`, `Timeout`, `Container Exited`) para facilitar el diagnóstico inmediato.
+    * **Servicio Recuperado:** Muestra la latencia actual del servicio tras la recuperación.
+    * **Timestamp:** Todas las alertas incluyen la fecha y hora exacta del evento (zona horaria configurada) para una auditoría precisa.
 
-3. **Cambio de Estado del Worker:**
-    * Utiliza el mismo umbral `STATUS_CHANGE_THRESHOLD` para confirmar un cambio de estado estable (ej. de `200` a `500`).
-    * La recuperación a un estado `200` se notifica de inmediato.
-    * Los mensajes de alerta son personalizados para cada código de estado (`200`, `220`, `221`, `500`) y para los casos en que el worker es inaccesible (debido a falta de internet o a un fallo de la API), proporcionando un contexto más preciso.
+3. **Condiciones de Disparo:**
+    * **Caída de Servicio:** Tras `STATUS_CHANGE_THRESHOLD` fallos consecutivos.
+    * **Recuperación de Servicio:** Inmediata al primer éxito.
+    * **Estado del Worker:** Monitorización de cambios de estado del propio worker de Cloudflare con alertas contextuales.
 
 Este mecanismo asegura que solo se notifiquen los cambios de estado confirmados, aplicando una lógica consistente a todos los elementos monitoreados.
 
@@ -125,8 +132,8 @@ Todas las métricas se almacenan en una base de datos SQLite (`metrics.db`) con 
 | `internet_ok` | `INTEGER`| `1` si hay conexión, `0` si no. |
 | `ping_ms` | `REAL` | Latencia a `google.com`. |
 | `worker_status` | `INTEGER` | Código de estado HTTP retornado por la API del Cloudflare Worker. Refleja el resultado del procesamiento del latido. <br> - `200`: **Éxito**. Latido recibido, procesado y el estado del host/servicios fue actualizado. Puede indicar un estado "recorded" (sin cambios) o "recovered" (recuperación). <br> - `220`: **Advertencia (Ciego)**. Latido recibido y timestamp actualizado, pero la API no pudo leer el estado *anterior* de su base de datos. No se pudo determinar si hubo una recuperación. <br> - `221`: **Advertencia (Fallo en Actualización de Recuperación)**. Se detectó una recuperación, pero la API falló al actualizar su propio estado o al enviar la notificación. <br> - `500`: **Error Crítico del Worker**. La API falló en un paso esencial (ej. escribir el timestamp inicial) y el latido fue abortado. <br> - `NULL`: **Error del Agente Local**. El script de monitorización no pudo contactar la API del worker (ej. timeout, error de red, DNS). |
-| `cycle_duration_ms` | `REAL` | Duración del ciclo de monitorización (ms). |
-| `services_health`| `TEXT` | JSON con el estado detallado y latencia de cada servicio. |
+| `cycle_duration_ms` | `INTEGER` | Duración del ciclo de monitorización (ms). |
+| `services_health`| `TEXT` | JSON con el estado, latencia y posible error de cada servicio. <br> Ej: `{"app": {"status": "healthy", "latency_ms": 25, "error": null}}` |
 
 ## Configuración y Despliegue
 

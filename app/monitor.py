@@ -172,6 +172,8 @@ def smart_request(method, url, **kwargs):
     # Check if we should override: IP is set AND host matches a monitored service
     should_override = False
     if INTERNAL_DNS_OVERRIDE_IP and SERVICES_TO_CHECK:
+         # Find the original URL for the hostname from SERVICES_TO_CHECK
+         # This is needed to ensure the override only happens for configured services
          for svc_data in SERVICES_TO_CHECK.values():
              parsed_svc_url = urlparse(svc_data['url'])
              # Only attempt hostname comparison for http/https schemes and if a hostname exists
@@ -244,7 +246,7 @@ def _check_one_service(name, service_config):
     if url.startswith("docker:"):
         if not docker_client:
             print(f"Error: Docker client not available for service '{name}'.")
-            return name, {"status": "unhealthy", "latency_ms": None}
+            return name, {"status": "unhealthy", "latency_ms": None, "error": "Docker client unavailable"}
         
         container_name = url.split(":", 1)[1].strip()
         start_time = time.monotonic()
@@ -252,16 +254,16 @@ def _check_one_service(name, service_config):
             container = docker_client.containers.get(container_name)
             if container.status == 'running':
                 latency_ms = int((time.monotonic() - start_time) * 1000)
-                return name, {"status": "healthy", "latency_ms": latency_ms}
+                return name, {"status": "healthy", "latency_ms": latency_ms, "error": None}
             else:
                 print(f"Health check for '{name}' (container:{container_name}) FAILED. Status: {container.status}")
-                return name, {"status": "unhealthy", "latency_ms": None}
+                return name, {"status": "unhealthy", "latency_ms": None, "error": f"Container state: {container.status}"}
         except docker.errors.NotFound:
             print(f"Health check for '{name}' FAILED. Container '{container_name}' not found.")
-            return name, {"status": "unhealthy", "latency_ms": None}
+            return name, {"status": "unhealthy", "latency_ms": None, "error": "Container not found"}
         except Exception as e:
             print(f"Error checking Docker container '{container_name}' for service '{name}': {e}")
-            return name, {"status": "unhealthy", "latency_ms": None}
+            return name, {"status": "unhealthy", "latency_ms": None, "error": str(e)}
     else:
         try:
             # Pass custom headers to smart_request
@@ -270,11 +272,17 @@ def _check_one_service(name, service_config):
             # Consider 2xx (OK) and 3xx (Redirects) as healthy
             if 200 <= response.status_code < 400:
                 latency_ms = int(response.elapsed.total_seconds() * 1000)
-                return name, {"status": "healthy", "latency_ms": latency_ms}
+                return name, {"status": "healthy", "latency_ms": latency_ms, "error": None}
+            else:
+                return name, {"status": "unhealthy", "latency_ms": None, "error": f"HTTP {response.status_code}"}
+        except requests.exceptions.Timeout:
+             return name, {"status": "unhealthy", "latency_ms": None, "error": "Timeout"}
+        except requests.exceptions.ConnectionError:
+             return name, {"status": "unhealthy", "latency_ms": None, "error": "Connection Error"}
         except requests.exceptions.RequestException as e:
-            # Detailed logging for diagnostics when a service check fails
-            print(f"Health check for '{name}' ({url}) FAILED. Error: {e}")
-        return name, {"status": "unhealthy", "latency_ms": None}
+            return name, {"status": "unhealthy", "latency_ms": None, "error": str(e)}
+        except Exception as e:
+            return name, {"status": "unhealthy", "latency_ms": None, "error": str(e)}
 
 def check_services_health(executor):
     """Checks the health of configured services in parallel."""
@@ -306,12 +314,16 @@ def send_heartbeat(services_payload):
         print(f"Heartbeat request failed: {e}")
         return None
 
-def send_notification(item_name, new_status, old_status, internet_ok=True):
-    """Sends a formatted, customized alert to the n8n webhook for any state change."""
+def send_notification(item_name, new_status, old_status, extra_info=None, internet_ok=True):
+    """
+    Sends a formatted, customized alert to the n8n webhook for any state change.
+    Includes robust error handling and retries.
+    """
     if not N8N_WEBHOOK_URL:
-        print("Warning: N8N_WEBHOOK_URL is not set. Could not send alert.")
+        # Warning already logged at startup
         return
 
+    timestamp = datetime.datetime.now(LIMA_TZ).strftime("%Y-%m-%d %H:%M:%S")
     title = ""
     message = ""
     old_status_str = f"`{old_status or 'N/A'}`"
@@ -321,51 +333,58 @@ def send_notification(item_name, new_status, old_status, internet_ok=True):
         if new_status is None:
             cause = "sin conexión a internet" if not internet_ok else "API del worker inaccesible"
             title = f"📡 Sin Conexión con Worker | Heartbeat-Monitor"
-            message = f"No se pudo contactar la API del worker.\n\n- **Causa probable**: {cause}.\n- **Último estado conocido**: {old_status_str}"
+            message = f"No se pudo contactar la API del worker.\n\n- **Causa probable**: {cause}.\n- **Último estado conocido**: {old_status_str}\n- **Hora**: {timestamp}"
         else:
             status_map = {
                 200: {
                     "title": "✅ Worker Recuperado | Heartbeat-Monitor",
-                    "message": f"La comunicación con el worker se ha restablecido.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                    "message": f"La comunicación con el worker se ha restablecido.\n\n**Transición**: {old_status_str} -> {new_status_str}\n**Hora**: {timestamp}"
                 },
                 220: {
                     "title": "⚠️ Advertencia (Ciego) | Heartbeat-Monitor",
-                    "message": f"El worker recibió el latido, pero no pudo leer su estado anterior.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                    "message": f"El worker recibió el latido, pero no pudo leer su estado anterior.\n\n**Transición**: {old_status_str} -> {new_status_str}\n**Hora**: {timestamp}"
                 },
                 221: {
                     "title": "⚠️ Advertencia (Fallo en Actualización) | Heartbeat-Monitor",
-                    "message": f"Se detectó recuperación, pero el worker falló al actualizar su estado.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                    "message": f"Se detectó recuperación, pero el worker falló al actualizar su estado.\n\n**Transición**: {old_status_str} -> {new_status_str}\n**Hora**: {timestamp}"
                 },
                 500: {
                     "title": "🔥 Error de Worker | Heartbeat-Monitor",
-                    "message": f"La API del worker reporta un error interno.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                    "message": f"La API del worker reporta un error interno.\n\n**Transición**: {old_status_str} -> {new_status_str}\n**Hora**: {timestamp}"
                 }
             }
             default_info = {
                 "title": f"ℹ️ Cambio de Estado | Heartbeat-Monitor",
-                "message": f"El estado del worker ha cambiado de forma inesperada.\n\n**Transición**: {old_status_str} -> {new_status_str}"
+                "message": f"El estado del worker ha cambiado de forma inesperada.\n\n**Transición**: {old_status_str} -> {new_status_str}\n**Hora**: {timestamp}"
             }
             alert_info = status_map.get(new_status, default_info)
             title = alert_info["title"]
             message = alert_info["message"]
     else:  # It's a service
+        extra_detail = ""
         if new_status == 'healthy':
+            latency_msg = f" ({extra_info}ms)" if extra_info is not None else ""
             title = f"✅ Servicio Recuperado: {item_name}"
-            message = f"El servicio **{item_name}** vuelve a estar operativo.\n\n**Transición**: `{old_status}` -> `{new_status}`"
+            message = f"El servicio **{item_name}** vuelve a estar operativo{latency_msg}.\n\n**Transición**: `{old_status}` -> `{new_status}`\n**Hora**: {timestamp}"
         else:  # Unhealthy or other
+            error_msg = f"\n**Error**: `{extra_info}`" if extra_info else ""
             title = f"❌ Servicio Caído: {item_name}"
-            message = f"El servicio **{item_name}** ha dejado de responder.\n\n**Transición**: `{old_status}` -> `{new_status}`"
+            message = f"El servicio **{item_name}** ha dejado de responder.{error_msg}\n\n**Transición**: `{old_status}` -> `{new_status}`\n**Hora**: {timestamp}"
 
-    try:
-        smart_request('POST', N8N_WEBHOOK_URL, json={"title": title, "message": message}, timeout=2)
-        print(f"STATE CHANGE ALERT sent for '{item_name}': {old_status or 'N/A'} -> {new_status or 'N/A'}")
-    except requests.exceptions.RequestException as e:
-        print(f"Failed to send state change alert for '{item_name}': {e}")
+    # Retry logic
+    for attempt in range(3):
+        try:
+            smart_request('POST', N8N_WEBHOOK_URL, json={"title": title, "message": message}, timeout=5)
+            print(f"STATE CHANGE ALERT sent for '{item_name}': {old_status or 'N/A'} -> {new_status or 'N/A'}")
+            break
+        except requests.exceptions.RequestException as e:
+            print(f"Failed to send state change alert for '{item_name}' (Attempt {attempt + 1}/3): {e}")
+            time.sleep(2)
 
 
-def check_state_change(item_name, current_status, immediate_notify_statuses):
+def check_state_change(item_name, current_status, immediate_notify_statuses, extra_info=None):
     """
-    Generic state change processor. Returns an action and the old status if a notification is needed.
+    Generic state change processor. Returns an action, the old status, and relevant extra info if a notification is needed.
     Actions: 'NOTIFY_RECOVERY', 'NOTIFY_DOWN', or None
     """
     # Initialize state for new items
@@ -375,7 +394,7 @@ def check_state_change(item_name, current_status, immediate_notify_statuses):
             'transient_status': current_status,
             'transient_counter': 1
         }
-        return None, None
+        return None, None, None
 
     state = global_states[item_name]
     old_stable_status = state['last_stable_status']
@@ -399,15 +418,18 @@ def check_state_change(item_name, current_status, immediate_notify_statuses):
         
         if action:
             state['last_stable_status'] = state['transient_status']
-            return action, old_stable_status
+            return action, old_stable_status, extra_info
             
-    return None, None
+    return None, None, None
 
 # --- Main Execution ---
 def main():
     """Main monitoring loop with parallel data collection."""
     initialize_database()
     
+    if not N8N_WEBHOOK_URL:
+        print("WARNING: N8N_WEBHOOK_URL is not set. Alerts will NOT be sent.")
+
     if not SERVICES_TO_CHECK:
         print("CRITICAL: No services configured. Please set SERVICE_NAMES and SERVICE_URL_* environment variables.")
         return
@@ -458,16 +480,19 @@ def main():
 
             # --- Unified State Processing ---
             # Process Worker Status
-            action, old_status = check_state_change('worker', worker_status, [200])
+            action, old_status, _ = check_state_change('worker', worker_status, [200])
             if action:
-                send_notification('worker', worker_status, old_status, internet_ok)
+                send_notification('worker', worker_status, old_status, internet_ok=internet_ok)
             
             # Process Individual Service Statuses
             for name, health_data in services_health_full.get("services", {}).items():
                 service_status = health_data['status']
-                action, old_status = check_state_change(name, service_status, ['healthy'])
+                # Extract extra info based on status: latency for healthy, error for unhealthy
+                extra_info = health_data.get('latency_ms') if service_status == 'healthy' else health_data.get('error')
+                
+                action, old_status, info_to_send = check_state_change(name, service_status, ['healthy'], extra_info)
                 if action:
-                    send_notification(name, service_status, old_status)
+                    send_notification(name, service_status, old_status, extra_info=info_to_send)
 
             # --- Save & Log ---
             cycle_duration_ms = int((time.monotonic() - cycle_start_time) * 1000)
@@ -481,7 +506,7 @@ def main():
             save_metrics_to_db(all_metrics)
 
             # --- Log Cycle Summary ---
-            services_log_str = ", ".join([f'\"{name}\": {json.dumps(data)}' for name, data in services_health_full.get("services", {}).items()])
+            services_log_str = ", ".join([f'"{name}": {json.dumps({k: v for k, v in data.items() if v is not None and not (k=="error" and data.get("status")=="healthy")})}' for name, data in services_health_full.get("services", {}).items()])
             worker_log = global_states.get('worker', {})
             log_msg = (
                 f"{timestamp_lima} - Metrics saved.\n"

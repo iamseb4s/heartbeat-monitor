@@ -42,20 +42,25 @@ A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status 
 The monitor supports advanced features to cover complex use cases, such as internal services or protected endpoints.
 
 #### 1. Direct Container Monitoring (`docker:`)
+
 For infrastructure services (like Nginx, tunnels, databases) that do not expose an easily accessible HTTP port, you can use the `docker:` protocol. This directly verifies if the container is in a `running` state.
 
-*   **Syntax:** `SERVICE_URL_<name>="docker:<container_name>"`
-*   **Example:**
+* **Syntax:** `SERVICE_URL_<name>="docker:<container_name>"`
+* **Example:**
+
     ```bash
     SERVICE_URL_nginx="docker:my-nginx-container"
     ```
-*   **Note:** This requires the agent to have access to the Docker socket (`/var/run/docker.sock`), which is already configured by default in the `docker-compose.yml`.
+
+* **Note:** This requires the agent to have access to the Docker socket (`/var/run/docker.sock`), which is already configured by default in the `docker-compose.yml`.
 
 #### 2. Custom HTTP Headers
+
 Some health endpoints require authentication or specific headers to respond correctly. You can define these using environment variables with the `SERVICE_HEADERS_` prefix.
 
-*   **Syntax:** `SERVICE_HEADERS_<name>="Header1:Value1,Header2:Value2"`
-*   **Example:**
+* **Syntax:** `SERVICE_HEADERS_<name>="Header1:Value1,Header2:Value2"`
+* **Example:**
+
     ```bash
     # Checks an endpoint that requires a special token or flag
     SERVICE_URL_api="https://my-api.com/health"
@@ -94,18 +99,20 @@ All state logic is managed through a single generic function, `check_state_chang
 
 ### Notification Logic
 
-The system sends alerts to the `N8N_WEBHOOK_URL` (the sole channel for all notifications) under the following conditions:
+The system sends alerts to the `N8N_WEBHOOK_URL` (the sole channel for all notifications) under the following conditions, now including robustness and detail mechanisms:
 
-1. **Service Downtime:**
-    * If a service reports an `unhealthy` status for `STATUS_CHANGE_THRESHOLD` (currently 4) consecutive cycles, a "Service Down" alert is sent.
+1. **Robustness and Retries:**
+    * If sending the alert fails (e.g., webhook timeout), the system automatically retries up to **3 times** before giving up, ensuring critical alerts reach their destination.
 
-2. **Service Recovery:**
-    * If a service that was down reports `healthy` **just once**, a "Service Recovered" alert is sent immediately.
+2. **Enriched Alerts:**
+    * **Service Down:** Includes the specific reason for the failure (e.g., `HTTP 500`, `Timeout`, `Container Exited`) to facilitate immediate diagnosis.
+    * **Service Recovered:** Shows the current latency of the service upon recovery.
+    * **Timestamp:** All alerts include the exact date and time of the event (configured timezone) for accurate auditing.
 
-3. **Worker Status Change:**
-    * Uses the same `STATUS_CHANGE_THRESHOLD` to confirm a stable state change (e.g., from `200` to `500`).
-    * Recovery to a `200` status is notified immediately.
-    * Alert messages are customized for each status code (`200`, `220`, `221`, `500`) and for cases where the worker is unreachable (due to lack of internet or API failure), providing more precise context.
+3. **Trigger Conditions:**
+    * **Service Down:** After `STATUS_CHANGE_THRESHOLD` consecutive failures.
+    * **Service Recovery:** Immediate upon the first success.
+    * **Worker Status:** Monitoring of state changes of the Cloudflare worker itself with contextual alerts.
 
 This mechanism ensures that only confirmed state changes are notified, applying consistent logic to all monitored elements.
 
@@ -125,8 +132,8 @@ All metrics are stored in an SQLite database (`metrics.db`) with `WAL` mode enab
 | `internet_ok` | `INTEGER`| `1` if connected, `0` otherwise. |
 | `ping_ms` | `REAL` | Latency to `google.com`. |
 | `worker_status` | `INTEGER` | HTTP status code returned by the Cloudflare Worker API. Reflects the outcome of the heartbeat processing. <br> - `200`: **Success**. Heartbeat received, processed, and host/service status was updated. Can indicate a "recorded" (no change) or "recovered" state. <br> - `220`: **Warning (Blind)**. Heartbeat received and timestamp updated, but the API could not read the *previous* state from its database. Unable to determine if a recovery occurred. <br> - `221`: **Warning (Recovery Update Failed)**. A recovery was detected, but the API failed to update its own state or send the notification. <br> - `500`: **Critical Worker Error**. The API failed an essential step (e.g., writing the initial timestamp) and the heartbeat was aborted. <br> - `NULL`: **Local Agent Error**. The monitoring script failed to contact the worker API (e.g., timeout, network error, DNS issue). |
-| `cycle_duration_ms` | `REAL` | Duration of the monitoring cycle (ms). |
-| `services_health`| `TEXT` | JSON with detailed status and latency of each service. |
+| `cycle_duration_ms` | `INTEGER` | Duration of the monitoring cycle (ms). |
+| `services_health`| `TEXT` | JSON with detailed status, latency, and error info for each service. <br> Ex: `{"app": {"status": "healthy", "latency_ms": 25, "error": null}}` |
 
 ## Setup and Deployment
 
