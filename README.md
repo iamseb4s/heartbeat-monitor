@@ -37,6 +37,31 @@ The services to be monitored are not hard-coded. They are configured dynamically
 
 A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Otherwise, it is marked as `"unhealthy"`.
 
+### Advanced Service Configuration
+
+The monitor supports advanced features to cover complex use cases, such as internal services or protected endpoints.
+
+#### 1. Direct Container Monitoring (`docker:`)
+For infrastructure services (like Nginx, tunnels, databases) that do not expose an easily accessible HTTP port, you can use the `docker:` protocol. This directly verifies if the container is in a `running` state.
+
+*   **Syntax:** `SERVICE_URL_<name>="docker:<container_name>"`
+*   **Example:**
+    ```bash
+    SERVICE_URL_nginx="docker:my-nginx-container"
+    ```
+*   **Note:** This requires the agent to have access to the Docker socket (`/var/run/docker.sock`), which is already configured by default in the `docker-compose.yml`.
+
+#### 2. Custom HTTP Headers
+Some health endpoints require authentication or specific headers to respond correctly. You can define these using environment variables with the `SERVICE_HEADERS_` prefix.
+
+*   **Syntax:** `SERVICE_HEADERS_<name>="Header1:Value1,Header2:Value2"`
+*   **Example:**
+    ```bash
+    # Checks an endpoint that requires a special token or flag
+    SERVICE_URL_api="https://my-api.com/health"
+    SERVICE_HEADERS_api="x-health-check:true,Authorization:Bearer my-token"
+    ```
+
 ### Latency Optimization (DNS Override)
 
 For environments where services reside on the same local network or server (e.g., Docker containers behind an Nginx on the host), the agent allows configuring a DNS override IP (`INTERNAL_DNS_OVERRIDE_IP`) to drastically reduce latency.

@@ -57,23 +57,39 @@ N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
 INTERNAL_DNS_OVERRIDE_IP = os.getenv('INTERNAL_DNS_OVERRIDE_IP')
 
 def parse_services_from_env():
-    """Parses service configuration from environment variables."""
-    services = {}
+    """
+    Parses service configuration from environment variables,
+    including URLs and optional custom headers.
+    Returns a dict like: {'name': {'url': '...', 'headers': {}}}.
+    """
+    services_config = {}
     service_names_str = os.getenv('SERVICE_NAMES', '')
     if not service_names_str:
         print("Warning: SERVICE_NAMES environment variable not set. No services will be monitored.")
-        return services
+        return services_config
         
     service_names = [name.strip() for name in service_names_str.split(',')]
     
     for name in service_names:
         url = os.getenv(f'SERVICE_URL_{name}')
-        if url:
-            services[name] = url
-        else:
+        if not url:
             print(f"Warning: Missing URL for service '{name}'. Environment variable SERVICE_URL_{name} not found.")
+            continue
+        
+        custom_headers = {}
+        headers_str = os.getenv(f'SERVICE_HEADERS_{name}')
+        if headers_str:
+            try:
+                # Expecting format "Key1:Value1,Key2:Value2"
+                for header_pair in headers_str.split(','):
+                    key, value = header_pair.split(':', 1)
+                    custom_headers[key.strip()] = value.strip()
+            except ValueError:
+                print(f"Warning: Invalid format for SERVICE_HEADERS_{name}. Expected 'Key:Value,Key:Value'. Skipping custom headers for {name}.")
+
+        services_config[name] = {'url': url, 'headers': custom_headers}
             
-    return services
+    return services_config
 
 SERVICES_TO_CHECK = parse_services_from_env()
 
@@ -151,19 +167,21 @@ def smart_request(method, url, **kwargs):
     hostname = parsed.hostname or ""
     
     target_url = clean_url
-    headers = kwargs.pop('headers', {}) or {}
-    
+    headers = kwargs.pop('headers', {}) or {} # Pop headers from kwargs if passed
+
     # Check if we should override: IP is set AND host matches a monitored service
     should_override = False
     if INTERNAL_DNS_OVERRIDE_IP and SERVICES_TO_CHECK:
-         for svc_url in SERVICES_TO_CHECK.values():
-             if hostname in svc_url:
+         for svc_data in SERVICES_TO_CHECK.values():
+             parsed_svc_url = urlparse(svc_data['url'])
+             # Only attempt hostname comparison for http/https schemes and if a hostname exists
+             if parsed_svc_url.scheme in ['http', 'https'] and hostname and parsed_svc_url.hostname and hostname in parsed_svc_url.hostname:
                  should_override = True
                  break
 
     if should_override:
         # Rewrite URL: use IP directly and force HTTP
-        target_url = clean_url.replace(hostname, INTERNAL_DNS_OVERRIDE_IP).replace("https://", "http://")
+        target_url = clean_url.replace(hostname, INTERNAL_DNS_OVERRIDE_IP, 1).replace("https://", "http://")
         
         # Set original Host header
         headers['Host'] = hostname
@@ -187,13 +205,22 @@ def get_system_metrics():
         "disk_percent": round(disk.percent, 2)
     }
 
+# Docker client setup
+try:
+    docker_client = docker.from_env(timeout=2)
+except Exception as e:
+    print(f"WARNING: Could not connect to Docker socket: {e}. Docker container checks will fail.")
+    docker_client = None
+
+
 def get_container_count():
     """Counts running Docker containers."""
+    if not docker_client:
+        return -1
     try:
-        client = docker.from_env(timeout=2)
-        return len(client.containers.list())
+        return len(docker_client.containers.list())
     except Exception as e:
-        print(f"Could not connect to Docker socket: {e}")
+        print(f"Error counting Docker containers: {e}")
         return -1
 
 def check_internet_and_ping():
@@ -206,26 +233,55 @@ def check_internet_and_ping():
         pass
     return 0, None
 
-def _check_one_service(name, url):
-    """Helper function to check a single service, capturing latency."""
-    try:
-        response = smart_request('HEAD', url, timeout=SERVICE_TIMEOUT_SECONDS)
+def _check_one_service(name, service_config):
+    """
+    Helper function to check a single service, capturing latency.
+    Handles both HTTP/HTTPS and 'docker:' protocol checks.
+    """
+    url = service_config['url']
+    headers = service_config.get('headers', {}) # Get custom headers for the service
+    
+    if url.startswith("docker:"):
+        if not docker_client:
+            print(f"Error: Docker client not available for service '{name}'.")
+            return name, {"status": "unhealthy", "latency_ms": None}
         
-        # Consider 2xx (OK) and 3xx (Redirects) as healthy
-        if 200 <= response.status_code < 400:
-            latency_ms = response.elapsed.total_seconds() * 1000
-            return name, {"status": "healthy", "latency_ms": int(latency_ms)}
-    except requests.exceptions.RequestException as e:
-        # Detailed logging for diagnostics when a service check fails
-        print(f"Health check for '{name}' ({url}) FAILED. Error: {e}")
-    return name, {"status": "unhealthy", "latency_ms": None}
+        container_name = url.split(":", 1)[1].strip()
+        start_time = time.monotonic()
+        try:
+            container = docker_client.containers.get(container_name)
+            if container.status == 'running':
+                latency_ms = int((time.monotonic() - start_time) * 1000)
+                return name, {"status": "healthy", "latency_ms": latency_ms}
+            else:
+                print(f"Health check for '{name}' (container:{container_name}) FAILED. Status: {container.status}")
+                return name, {"status": "unhealthy", "latency_ms": None}
+        except docker.errors.NotFound:
+            print(f"Health check for '{name}' FAILED. Container '{container_name}' not found.")
+            return name, {"status": "unhealthy", "latency_ms": None}
+        except Exception as e:
+            print(f"Error checking Docker container '{container_name}' for service '{name}': {e}")
+            return name, {"status": "unhealthy", "latency_ms": None}
+    else:
+        try:
+            # Pass custom headers to smart_request
+            response = smart_request('HEAD', url, headers=headers, timeout=SERVICE_TIMEOUT_SECONDS)
+            
+            # Consider 2xx (OK) and 3xx (Redirects) as healthy
+            if 200 <= response.status_code < 400:
+                latency_ms = int(response.elapsed.total_seconds() * 1000)
+                return name, {"status": "healthy", "latency_ms": latency_ms}
+        except requests.exceptions.RequestException as e:
+            # Detailed logging for diagnostics when a service check fails
+            print(f"Health check for '{name}' ({url}) FAILED. Error: {e}")
+        return name, {"status": "unhealthy", "latency_ms": None}
 
 def check_services_health(executor):
     """Checks the health of configured services in parallel."""
     if not SERVICES_TO_CHECK:
         return {"services": {}}
         
-    futures = {executor.submit(_check_one_service, name, url): name for name, url in SERVICES_TO_CHECK.items()}
+    futures = {executor.submit(_check_one_service, name, config): name for name, config in SERVICES_TO_CHECK.items()}
     services_status = {}
     for future in as_completed(futures):
         name, status = future.result()
@@ -376,11 +432,15 @@ def main():
             
             # --- Run I/O-Bound Checks in Parallel ---
             with ThreadPoolExecutor(max_workers=4) as executor: 
-                future_services = executor.submit(check_services_health, executor)
+                future_services = {executor.submit(_check_one_service, name, config): name for name, config in SERVICES_TO_CHECK.items()}
                 future_internet = executor.submit(check_internet_and_ping)
                 future_containers = executor.submit(get_container_count)
 
-                services_health_full = future_services.result()
+                services_health_full = {"services": {}}
+                for future in as_completed(future_services):
+                    name, status = future.result()
+                    services_health_full["services"][name] = status
+
                 internet_ok, ping_ms = future_internet.result()
                 container_count = future_containers.result()
             

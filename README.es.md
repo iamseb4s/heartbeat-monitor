@@ -30,12 +30,37 @@ La funcionalidad principal del agente es monitorizar el estado de múltiples ser
 
 ### Configuración Dinámica
 
-Los servicios a monitorizar no están codificados en el script. Se configuran dinámicamente a través de variables de entorno:
+Los servicios a monitorear se configuran dinámicamente mediante variables de entorno:
 
-1. **`SERVICE_NAMES`**: Una lista de nombres de servicio separados por comas (ej: `SERVICE_NAMES=nextjs,strapi,umami`).
-2. **`SERVICE_URL_{name}`**: La URL a comprobar para cada nombre de servicio definido (ej: `SERVICE_URL_nextjs=https://www.example.com`).
+1. **`SERVICE_NAMES`**: Lista separada por comas de los nombres de los servicios (ej: `SERVICE_NAMES=nextjs,strapi,umami`).
+2. **`SERVICE_URL_{nombre}`**: La URL a chequear para cada nombre definido (ej: `SERVICE_URL_nextjs=https://www.ejemplo.com`).
 
-Un servicio se considera `"healthy"` si responde con un código de estado `2xx` o `3xx`. De lo contrario, se marca como `"unhealthy"`.
+Un servicio se considera `"healthy"` si responde con un código `2xx` o `3xx`. De lo contrario, se marca como `"unhealthy"`.
+
+### Configuración Avanzada de Servicios
+
+El monitor soporta características avanzadas para cubrir casos de uso complejos, como servicios internos o endpoints protegidos.
+
+#### 1. Monitoreo Directo de Contenedores (`docker:`)
+Para servicios de infraestructura (como Nginx, túneles, bases de datos) que no exponen un puerto HTTP accesible fácilmente, puedes usar el protocolo `docker:`. Esto verifica directamente si el contenedor está en estado `running`.
+
+*   **Sintaxis:** `SERVICE_URL_<nombre>="docker:<nombre_del_contenedor>"`
+*   **Ejemplo:**
+    ```bash
+    SERVICE_URL_nginx="docker:mi-contenedor-nginx"
+    ```
+*   **Nota:** Requiere que el agente tenga acceso al socket de Docker (`/var/run/docker.sock`), lo cual ya está configurado por defecto en el `docker-compose.yml`.
+
+#### 2. Headers HTTP Personalizados
+Algunos endpoints de salud requieren autenticación o headers específicos para responder correctamente. Puedes definirlos usando variables de entorno con el prefijo `SERVICE_HEADERS_`.
+
+*   **Sintaxis:** `SERVICE_HEADERS_<nombre>="Header1:Valor1,Header2:Valor2"`
+*   **Ejemplo:**
+    ```bash
+    # Verifica un endpoint que requiere un token o flag especial
+    SERVICE_URL_api="https://mi-api.com/health"
+    SERVICE_HEADERS_api="x-health-check:true,Authorization:Bearer mi-token"
+    ```
 
 ### Optimización de Latencia (DNS Override)
 
