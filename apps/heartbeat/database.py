@@ -1,8 +1,9 @@
 import sqlite3
 import uuid
 from pathlib import Path
+from config import SQLITE_DB_PATH
 
-DB_FILE = Path("/app/data/metrics.db")
+DB_FILE = Path(SQLITE_DB_PATH)
 
 def initialize_database():
     """Initializes the SQLite database and its schema."""

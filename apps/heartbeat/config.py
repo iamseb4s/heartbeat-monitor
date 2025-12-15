@@ -13,6 +13,7 @@ SECRET_KEY = os.getenv('SECRET_KEY')
 HEARTBEAT_URL = os.getenv('HEARTBEAT_URL')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
 INTERNAL_DNS_OVERRIDE_IP = os.getenv('INTERNAL_DNS_OVERRIDE_IP')
+SQLITE_DB_PATH = os.getenv('SQLITE_DB_PATH', 'data/metrics.db')
 
 def parse_services_from_env():
     """
