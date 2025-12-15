@@ -1,39 +1,101 @@
-# Heartbeat Monitor: Technical Documentation
+# Heartbeat Monitor: High-Performance Monitoring Agent
 
-## Overview
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.14-blue.svg" alt="Python 3.14">
+  <img src="https://img.shields.io/badge/Docker-passing-brightgreen.svg" alt="Docker Build Status">
+</p>
 
-This document details the architecture and internal workings of the monitoring agent. The agent is a Python script running in a Docker container, designed to assess the health of a server and its services, reporting metrics to an external endpoint and a local database.
+A lightweight, modular, and concurrent monitoring agent specifically designed for Dockerized environments. This system not only verifies availability but also optimizes network latency and manages service states with a resilient architecture.
 
-## Architecture and Execution Flow
+Developed in **Python 3.14 (Alpine)**, focused on resource efficiency and metric precision.
 
-The agent operates in a main loop that runs every `LOOP_INTERVAL_SECONDS` (currently 10 seconds). The execution is clock-aligned to ensure interval consistency (e.g., it runs at :00, :10, :20 seconds past the minute, etc.).
+## 🚀 Key Technical Features
 
-Each execution cycle follows a concurrent model to optimize time and prevent blocking:
+More than a simple "ping" script, this project implements engineering patterns to solve common problems in distributed monitoring:
 
-1. **Sequential CPU Task:** First, system metrics (`cpu_percent`, `ram_percent`, etc.) are collected using `psutil`. The `psutil.cpu_percent(interval=None)` call is non-blocking and measures CPU usage since the last call.
-2. **Concurrent I/O Tasks:** Immediately after, a `ThreadPoolExecutor` is used to launch all network-bound tasks (which are inherently blocking) in parallel. This includes:
-    * `check_services_health`: Checks the status of all services defined in the environment variables.
-    * `check_internet_and_ping`: Measures connectivity and latency to `google.com`.
-    * `get_container_count`: Connects to the Docker socket to count active containers.
-3. **Result Collection:** The script waits for all concurrent tasks to complete before proceeding.
-4. **Heartbeat Transmission:** With the results from the checks, a payload is constructed and sent to the `HEARTBEAT_URL`.
-5. **State and Alert Processing:** The status of the worker and each service is analyzed to determine if a stable state change has occurred that requires a notification.
-6. **Database Persistence:** Finally, all metrics and results from the cycle are saved to the SQLite database.
+* **⚡ Concurrent Architecture:** `ThreadPoolExecutor` implementation to parallelize I/O operations (HTTP requests, Docker socket queries), decoupling metric collection from network blocking and ensuring precise execution cycles.
+* **🧠 Smart Networking:**
+  * **DNS Override & Host Injection:** Mechanism capable of intercepting traffic to internal services, resolving directly to local IPs and injecting `Host` headers. This eliminates external DNS resolution latency and SSL overhead in internal networks (reducing ~50ms to ~2ms).
+  * **IPv4 Enforcement:** Custom HTTP adapters at the transport layer to mitigate common IPv6 resolution delays in Alpine Linux/Docker containers.
+* **🐳 Native Docker Protocol:** Support for the `docker:<container_name>` scheme, allowing direct health checks against the Unix Docker socket (`/var/run/docker.sock`) for services that do not expose HTTP ports.
+* **🛡️ Data Resilience:** Use of SQLite in **WAL (Write-Ahead Logging)** mode to allow high concurrency in read/write operations without database blocking.
+* **🔔 Debounced State Management:** Intelligent alerting system that filters false positives using configurable state change thresholds and automatic retry logic for failed webhooks.
 
-### Cycle Time Estimation
+## ⚙️ Agent Execution Flow
 
-The use of `ThreadPoolExecutor` means that the duration of the I/O phase is determined by the slowest task, not the sum of all tasks. The `cycle_duration_ms` stored in the database records the actual duration of each cycle for analysis.
+The agent operates in a main loop, executing every 10 seconds, coordinating collection, processing, and notification.
 
-## Service Monitoring
+```ascii
+[ START ]
+    |
+    v
+[ 1. Load Configuration (.env) ]
+    |
+    v
+[ 2. Init Database (SQLite WAL) ]
+    |
+    +---> [ MAIN LOOP (Every 10s) ] <-------------------------------+
+            |                                                       |
+            |-- (A) System Metrics (CPU/RAM) [Synchronous]          |
+            |                                                       |
+            |-- (B) Health Checks [ThreadPoolExecutor / Parallel]   |
+            |       |--> HTTP/HTTPS (Smart Request)                 |
+            |       |--> Docker Socket                              |
+            |       +--> Ping Internet                              |
+            |                                                       |
+            v                                                       |
+    [ 3. Process State (Debounce Logic) ]                           |
+            |                                                       |
+            +--- State Changed? --------> [ Send Alert (N8N) ]      |
+            |                                                       |
+            +--- Internet OK? ----------> [ Send Heartbeat (CF) ]   |
+            |                                                       |
+            v                                                       |
+    [ 4. Persistence (Save Metrics to DB) ] ------------------------+
+```
+
+### Detailed Execution Flow (10s Cycle)
+
+1. **Initialization:** Configuration loading and establishment of persistent connections (Keep-Alive).
+2. **System Metrics (Synchronous):** Instantaneous reading of CPU/RAM/Disk (`psutil`).
+3. **Health Checks (Parallel):** Concurrent threads are launched to verify all configured services and Internet connectivity.
+4. **State Processing:** Changes (Healthy <-> Unhealthy) are evaluated against defined thresholds.
+5. **Notification/Heartbeat:** If critical changes occur or a heartbeat is due, optimized JSON payloads are sent to external endpoints.
+6. **Persistence:** An atomic commit of all cycle metrics is made to the local database.
+
+## 📂 Code Structure
+
+The project has been refactored from a monolithic script into a modular architecture based on Single Responsibility Principle (SRP):
+
+```text
+app/
+├── main.py        # Main application orchestrator.
+├── config.py      # Configuration and environment variables management.
+├── monitors.py    # Metrics collection and health checks.
+├── alerts.py      # State management and notification sending.
+├── network.py     # Network infrastructure and requests configuration.
+└── database.py    # SQLite data persistence functionalities.
+```
+
+### Module Descriptions
+
+* **`main.py`**: Contains the application's main execution loop. It coordinates initialization, data collection, state processing, and metric persistence by interacting with other modules.
+* **`config.py`**: Centralizes environment variable reading, global constant definitions, and parsing of service configuration for monitoring.
+* **`monitors.py`**: Groups the functions responsible for obtaining system data (CPU, RAM, Disk), counting Docker containers, and performing health checks for HTTP/HTTPS and Docker services.
+* **`alerts.py`**: Implements the logic for transient and stable state management, as well as the mechanism for sending alerts via N8N webhooks and heartbeat communication to the Cloudflare worker.
+* **`network.py`**: Provides the abstraction layer for network operations. Includes HTTP session configuration (forcing IPv4), and the `smart_request` function with its internal DNS override logic.
+* **`database.py`**: Encapsulates all operations related to the SQLite database, including its initialization (table creation) and the saving of collected metrics in each cycle.
+
+## Monitoring Services
 
 The agent's primary functionality is to monitor the status of multiple web services, report it to the worker, and generate alerts if their status changes persistently.
 
 ### Dynamic Configuration
 
-The services to be monitored are not hard-coded. They are configured dynamically via environment variables:
+The services to be monitored are configured dynamically via environment variables:
 
-1. **`SERVICE_NAMES`**: A comma-separated list of service names (e.g., `SERVICE_NAMES=nextjs,strapi,umami`).
-2. **`SERVICE_URL_{name}`**: The URL to check for each defined service name (e.g., `SERVICE_URL_nextjs=https://www.example.com`).
+1. **`SERVICE_NAMES`**: Comma-separated list of service names (e.g., `SERVICE_NAMES=nextjs,strapi,umami`).
+2. **`SERVICE_URL_{name}`**: The URL to check for each defined name (e.g., `SERVICE_URL_nextjs=https://www.example.com`).
 
 A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Otherwise, it is marked as `"unhealthy"`.
 
@@ -95,11 +157,11 @@ In each cycle, the agent constructs a JSON payload summarizing the health status
 
 To prevent false alarms from transient failures and to centralize notifications, the agent implements a **unified state architecture**.
 
-All state logic is managed through a single generic function, `check_state_change`, and stored in a global in-memory dictionary, `global_states`. This approach allows monitoring any item (the main worker or individual services) using the same rules, avoiding code duplication.
+All state logic is managed through a single generic function, `check_state_change`, and is stored in a global in-memory dictionary, `global_states`. This approach allows monitoring any item (the main worker or individual services) using the same rules, avoiding code duplication.
 
 ### Notification Logic
 
-The system sends alerts to the `N8N_WEBHOOK_URL` (the sole channel for all notifications) under the following conditions, now including robustness and detail mechanisms:
+The system sends alerts to the `N8N_WEBHOOK_URL` under the following conditions, now including robustness and detail mechanisms:
 
 1. **Robustness and Retries:**
     * If sending the alert fails (e.g., webhook timeout), the system automatically retries up to **3 times** before giving up, ensuring critical alerts reach their destination.
@@ -110,7 +172,7 @@ The system sends alerts to the `N8N_WEBHOOK_URL` (the sole channel for all notif
     * **Timestamp:** All alerts include the exact date and time of the event (configured timezone) for accurate auditing.
 
 3. **Trigger Conditions:**
-    * **Service Down:** After `STATUS_CHANGE_THRESHOLD` consecutive failures.
+    * **Service Downtime:** After `STATUS_CHANGE_THRESHOLD` consecutive failures.
     * **Service Recovery:** Immediate upon the first success.
     * **Worker Status:** Monitoring of state changes of the Cloudflare worker itself with contextual alerts.
 
@@ -141,3 +203,4 @@ All metrics are stored in an SQLite database (`metrics.db`) with `WAL` mode enab
 2. **Configure `.env`:** Copy `.env.example` to `.env` and fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES`, and the corresponding `SERVICE_URL_*` values.
 3. **Run:** `docker compose up -d --build`
 4. **View Logs:** `docker compose logs -f monitor-agent`
+    * **Note on Logs:** To keep console logs clean, the `error` field is not displayed when a service is `healthy`. This field will only appear in logs and notifications when the service is `unhealthy` and has an associated error.
