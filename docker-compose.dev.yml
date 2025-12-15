@@ -8,8 +8,6 @@ services:
       - ./.env.dev
     ports:
       - "8099:8080"
-    volumes:
-      - ./data/mock_logs:/tmp
 
   monitor-agent-dev:
     build:

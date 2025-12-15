@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heartbeat Mock Controller</title>
+    <style>
+      :root {
+        --background: #09090b;
+        --card-background: #1a1a1c;
+        --input-background: #27272a;
+        --border-color: #27272a;
+        --text-primary: #fafafa;
+        --text-secondary: #a1a1aa;
+        --primary-accent: #6d28d9;
+        --primary-accent-hover: #5b21b6;
+        --danger-accent: #dc2626;
+        --danger-accent-hover: #b91c1c;
+      }
+
+      body {
+        margin: 0;
+        font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+          "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+        background-color: var(--background);
+        color: var(--text-primary);
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        min-height: 100vh;
+        padding: 1rem;
+        box-sizing: border-box;
+      }
+
+      .container {
+        width: 100%;
+        max-width: 800px;
+      }
+
+      .card {
+        background-color: var(--card-background);
+        border-radius: 0.5rem;
+        border: 1px solid var(--border-color);
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+      }
+
+      h1,
+      h2 {
+        margin: 0;
+        letter-spacing: -0.025em;
+      }
+
+      h1 {
+        font-size: 1.875rem;
+        text-align: center;
+        margin-bottom: 1.5rem;
+      }
+      h2 {
+        font-size: 1.25rem;
+        margin-bottom: 1rem;
+      }
+
+      .form-grid {
+        display: grid;
+        grid-template-columns: 1fr;
+        gap: 1.5rem; /* Gap for elements inside the grid */
+        align-items: center;
+      }
+
+      @media (min-width: 640px) {
+        .form-grid {
+          grid-template-columns: 1fr 2fr;
+        }
+      }
+
+      /* Specific spacing for control groups */
+      .control-group {
+        margin-bottom: 1rem;
+      }
+      .control-group:last-of-type {
+        margin-bottom: 0;
+      }
+
+      label {
+        display: block;
+        font-weight: 600;
+        color: var(--text-secondary);
+        font-size: 0.85rem;
+        margin-bottom: 0.5rem;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+      }
+
+      select {
+        background-color: var(--input-background);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        border-radius: 0.375rem;
+        padding: 0.75rem 1rem;
+        width: 100%;
+        box-sizing: border-box;
+        transition: all 0.2s ease;
+        appearance: none;
+        background-image: url("data:image/svg+xml;charset=US-ASCII,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2224%22%20height%3D%2224%22%20viewBox%3D%220%200%2024%2024%22%20fill%3D%22none%22%20stroke%3D%22%23a1a1aa%22%20stroke-width%3D%222%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%3E%3Cpolyline%20points%3D%226%209%2012%2015%2018%209%22%3E%3C%2Fpolyline%3E%3C%2Fsvg%3E");
+        background-repeat: no-repeat;
+        background-position: right 1rem center;
+        background-size: 1rem;
+        font-size: 0.95rem;
+        cursor: pointer;
+      }
+
+      select:hover {
+        border-color: #52525b;
+      }
+
+      select:focus {
+        outline: none;
+        border-color: var(--primary-accent);
+        box-shadow: 0 0 0 2px rgba(109, 40, 217, 0.2);
+      }
+
+      .logs {
+        background: #1e1e1e;
+        color: #d4d4d4;
+        padding: 1rem;
+        border-radius: 0.5rem;
+        overflow-x: auto;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 0.85rem;
+        line-height: 1.5;
+        margin-top: 1rem;
+        height: 300px;
+        white-space: pre-wrap;
+        word-wrap: break-word;
+        border: 1px solid var(--border-color);
+        box-shadow: inset 0 2px 4px rgba(0, 0, 0, 0.2);
+      }
+
+      /* Custom Scrollbar for Dark Theme */
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: var(--card-background);
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: #3f3f46;
+        border-radius: 4px;
+      }
+      ::-webkit-scrollbar-thumb:hover {
+        background: #52525b;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <div class="card">
+        <h1>Heartbeat Mock Controller</h1>
+
+        <div class="form-grid control-group">
+          <label for="is_online">Mock Server Availability</label>
+          <select id="is_online" name="is_online" onchange="updateConfig()">
+            <option value="true">🟢 ONLINE (Respond Normally)</option>
+            <option value="false">🔴 OFFLINE (Return 503)</option>
+          </select>
+        </div>
+
+        <div class="form-grid control-group">
+          <label for="mode">Heartbeat Response Mode</label>
+          <select id="mode" name="mode" onchange="updateConfig()">
+            <option value="AUTO">🤖 AUTO (Simulate Worker Logic)</option>
+            <option value="RECORDED">✅ FORCE 200 (Recorded)</option>
+            <option value="RECOVERED">🎉 FORCE 200 (Recovered)</option>
+            <option value="BLIND">⚠️ FORCE 220 (Blind - DB Read Fail)</option>
+            <option value="PARTIAL">
+              ⚠️ FORCE 221 (Partial - Update Fail)
+            </option>
+            <option value="CRITICAL">🔥 FORCE 500 (Critical DB Error)</option>
+          </select>
+        </div>
+
+        <div class="form-grid control-group">
+          <label for="host_status">Internal Host Status (for AUTO mode)</label>
+          <select id="host_status" name="host_status" onchange="updateConfig()">
+            <option value="online">Online (Agent is Healthy)</option>
+            <option value="offline">
+              Offline (Next beat will trigger Recovery)
+            </option>
+          </select>
+        </div>
+      </div>
+
+      <div class="card">
+        <h2>Mock Server Logs</h2>
+        <pre id="mock-logs" class="logs"></pre>
+      </div>
+    </div>
+
+    <script>
+      let lastLogPosition = 0;
+      let configFetched = false;
+
+      async function fetchConfig() {
+        try {
+          const response = await fetch("/api/config");
+          const data = await response.json();
+          document.getElementById("is_online").value =
+            data.is_online.toString();
+          document.getElementById("mode").value = data.mode;
+          document.getElementById("host_status").value = data.host_status;
+          configFetched = true;
+        } catch (error) {
+          console.error("Error fetching config:", error);
+        }
+      }
+
+      async function updateConfig() {
+        if (!configFetched) return;
+        const data = {
+          is_online: document.getElementById("is_online").value === "true",
+          mode: document.getElementById("mode").value,
+          host_status: document.getElementById("host_status").value,
+        };
+
+        try {
+          const response = await fetch("/api/config", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(data),
+          });
+          const result = await response.json();
+          console.log("Configuration Updated:", result);
+        } catch (error) {
+          console.error("Error updating config:", error);
+          alert("Error updating configuration. Check console for details.");
+        }
+      }
+
+      async function fetchLogs() {
+        try {
+          const response = await fetch(`/api/logs?offset=${lastLogPosition}`);
+          const newLogs = await response.text();
+          if (newLogs) {
+            const logsElement = document.getElementById("mock-logs");
+            logsElement.textContent += newLogs;
+            logsElement.scrollTop = logsElement.scrollHeight;
+            lastLogPosition += newLogs.length;
+          }
+        } catch (error) {
+          console.error("Error fetching logs:", error);
+        }
+      }
+
+      fetchConfig();
+      setInterval(fetchLogs, 1000);
+    </script>
+  </body>
+</html>
