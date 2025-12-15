@@ -438,6 +438,7 @@ def main():
     psutil.cpu_percent(interval=None)
     
     print(f"Starting monitoring loop. Monitoring services: {list(SERVICES_TO_CHECK.keys())}")
+    print(f"Config: Interval={LOOP_INTERVAL_SECONDS}s, Threshold={STATUS_CHANGE_THRESHOLD} cycles per state change.")
     
     while True:
         try:
@@ -508,11 +509,14 @@ def main():
             # --- Log Cycle Summary ---
             services_log_str = ", ".join([f'"{name}": {json.dumps({k: v for k, v in data.items() if v is not None and not (k=="error" and data.get("status")=="healthy")})}' for name, data in services_health_full.get("services", {}).items()])
             worker_log = global_states.get('worker', {})
+            transient_cnt = worker_log.get('transient_counter', 0)
+            duration_str = str(datetime.timedelta(seconds=transient_cnt * LOOP_INTERVAL_SECONDS))
+            
             log_msg = (
                 f"{timestamp_lima} - Metrics saved.\n"
                 f"  Services: {services_log_str}\n"
                 f"  Worker Status: Current: {worker_status or 'N/A'}. Stable: {worker_log.get('last_stable_status', 'N/A')}. "
-                f"Transient: {worker_log.get('transient_status', 'N/A')} ({worker_log.get('transient_counter', 0)}/{STATUS_CHANGE_THRESHOLD})."
+                f"Transient: {worker_log.get('transient_status', 'N/A')} ({duration_str} - {transient_cnt} cycles)."
             )
             print(log_msg)
 
