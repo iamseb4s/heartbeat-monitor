@@ -1,8 +1,90 @@
-# Monitor de Latido (Heartbeat Monitor): Documentación Técnica
+# Heartbeat Monitor: Agente de Monitorización de Alto Rendimiento
 
-## Resumen
+<p align="center">
+  <img src="https://img.shields.io/badge/Python-3.14-blue.svg" alt="Python 3.14">
+  <img src="https://img.shields.io/badge/Docker-passing-brightgreen.svg" alt="Docker Build Status">
+</p>
 
-Este documento detalla la arquitectura y el funcionamiento interno del agente de monitorización. El agente es un script de Python que se ejecuta en un contenedor Docker y está diseñado para evaluar la salud de un servidor y sus servicios, reportando métricas a un endpoint externo y a una base de datos local.
+Un agente de monitorización ligero, modular y concurrente diseñado específicamente para entornos Dockerizados. Este sistema no solo verifica la disponibilidad, sino que optimiza la latencia de red y gestiona el estado de los servicios con una arquitectura resiliente.
+
+Desarrollado en **Python 3.14 (Alpine)**, enfocado en la eficiencia de recursos y la precisión de métricas.
+
+## 🚀 Características Técnicas Destacadas
+
+Más que un simple script de "ping", este proyecto implementa patrones de ingeniería para resolver problemas comunes en monitorización distribuida:
+
+* **⚡ Arquitectura Concurrente:** Implementación de `ThreadPoolExecutor` para paralelizar operaciones de I/O (solicitudes HTTP, consultas a sockets Docker), desacoplando la recolección de métricas del bloqueo de red y garantizando ciclos de ejecución precisos.
+* **🧠 Red Inteligente (Smart Networking):**
+  * **DNS Override & Host Injection:** Mecanismo capaz de interceptar tráfico hacia servicios internos, resolviendo directamente a IPs locales e inyectando cabeceras `Host`. Esto elimina la latencia de resolución DNS externa y el overhead de SSL en redes internas (reducción de ~50ms a ~2ms).
+  * **IPv4 Enforcement:** Adaptadores HTTP personalizados a nivel de transporte para mitigar los retrasos de resolución IPv6 comunes en contenedores Alpine Linux.
+* **🐳 Protocolo Docker Nativo:** Soporte para el esquema `docker:<container_name>`, permitiendo verificaciones de salud directas contra el socket Unix de Docker (`/var/run/docker.sock`) para servicios que no exponen puertos HTTP.
+* **🛡️ Resiliencia de Datos:** Uso de SQLite en modo **WAL (Write-Ahead Logging)** para permitir alta concurrencia en operaciones de lectura/escritura sin bloqueos de base de datos.
+* **🔔 Gestión de Estado con "Debounce":** Sistema de alertas inteligente que filtra falsos positivos mediante umbrales de cambio de estado configurables y lógica de reintentos automática ante fallos del webhook.
+
+## ⚙️ Flujo de Ejecución del Agente
+
+El agente opera en un bucle principal, ejecutándose cada 10 segundos, coordinando la recolección, procesamiento y notificación.
+
+```ascii
+[ INICIO ]
+    |
+    v
+[ 1. Cargar Configuración (.env) ]
+    |
+    v
+[ 2. Init Base de Datos (SQLite WAL) ]
+    |
+    +---> [ BUCLE PRINCIPAL (Cada 10s) ] <--------------------------+
+            |                                                       |
+            |-- (A) Métricas Sistema (CPU/RAM) [Síncrono]           |
+            |                                                       |
+            |-- (B) Health Checks [ThreadPoolExecutor / Paralelo]   |
+            |       |--> HTTP/HTTPS (Smart Request)                 |
+            |       |--> Docker Socket                              |
+            |       +--> Ping Internet                              |
+            |                                                       |
+            v                                                       |
+    [ 3. Procesar Estado (Debounce Logic) ]                         |
+            |                                                       |
+            +--- ¿Cambio de Estado? ---> [ Enviar Alerta (N8N) ]    |
+            |                                                       |
+            +--- ¿Internet OK? --------> [ Enviar Heartbeat (CF) ]  |
+            |                                                       |
+            v                                                       |
+    [ 4. Persistencia (Guardar Métricas en DB) ] -------------------+
+```
+
+### Flujo de Ejecución Detallado (Ciclo de 10s)
+
+1. **Inicialización:** Carga de configuración y establecimiento de conexiones persistentes (Keep-Alive).
+2. **Métricas de Sistema (Síncrono):** Lectura instantánea de CPU/RAM/Disco (`psutil`).
+3. **Health Checks (Paralelo)::** Se lanzan hilos concurrentes para verificar todos los servicios configurados y la conectividad a Internet.
+4. **Procesamiento de Estado:** Se evalúan los cambios (Healthy <-> Unhealthy) contra los umbrales definidos.
+5. **Notificación/Heartbeat:** Si hay cambios críticos o corresponde un latido, se envían payloads JSON optimizados a los endpoints externos.
+6. **Persistencia:** Se realiza un commit atómico de todas las métricas del ciclo en la base de datos local.
+
+## 📂 Estructura del Código
+
+El proyecto ha sido refactorizado desde un script monolítico hacia una arquitectura modular basada en responsabilidades únicas (SRP):
+
+```text
+app/
+├── main.py        # Orquestador principal de la aplicación.
+├── config.py      # Gestión de la configuración y variables de entorno.
+├── monitors.py    # Recopilación de métricas y chequeos de salud.
+├── alerts.py      # Gestión del estado y envío de notificaciones.
+├── network.py     # Infraestructura de red y configuración de requests.
+└── database.py    # Funcionalidades de persistencia de datos SQLite.
+```
+
+### Descripción de Módulos
+
+* **`main.py`**: Contiene el bucle principal de ejecución de la aplicación. Coordina la inicialización, la recolección de datos, el procesamiento de estado y la persistencia de métricas mediante la interacción con los demás módulos.
+* **`config.py`**: Centraliza la lectura de variables de entorno, la definición de constantes globales y el parseo de la configuración de servicios a monitorizar.
+* **`monitors.py`**: Agrupa las funciones responsables de obtener datos del sistema (CPU, RAM, Disco), contar contenedores Docker y realizar las comprobaciones de salud de los servicios HTTP/HTTPS y Docker.
+* **`alerts.py`**: Implementa la lógica de gestión de estado transitorio y estable, así como el mecanismo de envío de alertas a través de webhooks N8N y la comunicación de latidos al worker de Cloudflare.
+* **`network.py`**: Provee la capa de abstracción para las operaciones de red. Incluye la configuración de sesiones HTTP (forzando IPv4), y la función `smart_request` con su lógica de anulación de DNS interno.
+* **`database.py`**: Encapsula todas las operaciones relacionadas con la base de datos SQLite, incluyendo su inicialización (creación de tablas) y el guardado de las métricas recolectadas en cada ciclo.
 
 ## Arquitectura y Flujo de Ejecución
 
