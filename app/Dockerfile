@@ -17,4 +17,4 @@ RUN apk add --no-cache gcc python3-dev musl-dev linux-headers && \
 COPY . .
 
 # Specify the command to run on container start
-CMD ["python", "monitor.py"]
+CMD ["python", "main.py"]
