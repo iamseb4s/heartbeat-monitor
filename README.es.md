@@ -63,28 +63,42 @@ El agente opera en un bucle principal, ejecutándose cada 10 segundos, coordinan
 5. **Notificación/Heartbeat:** Si hay cambios críticos o corresponde un latido, se envían payloads JSON optimizados a los endpoints externos.
 6. **Persistencia:** Se realiza un commit atómico de todas las métricas del ciclo en la base de datos local.
 
-## 📂 Estructura del Código
+## 📂 Estructura del Código (Monorepo)
 
-El proyecto ha sido refactorizado desde un script monolítico hacia una arquitectura modular basada en responsabilidades únicas (SRP):
+El proyecto ha evolucionado hacia una arquitectura de **Monorepo** para gestionar tanto el agente principal como las herramientas de desarrollo auxiliares:
 
 ```text
-app/
-├── main.py        # Orquestador principal de la aplicación.
-├── config.py      # Gestión de la configuración y variables de entorno.
-├── monitors.py    # Recopilación de métricas y chequeos de salud.
-├── alerts.py      # Gestión del estado y envío de notificaciones.
-├── network.py     # Infraestructura de red y configuración de requests.
-└── database.py    # Funcionalidades de persistencia de datos SQLite.
+/
+├── apps/
+│   ├── heartbeat/     # Agente de monitorización (Código Producción)
+│   │   ├── main.py        # Orquestador principal.
+│   │   ├── config.py      # Gestión de configuración y env vars.
+│   │   ├── monitors.py    # Lógica de health checks y métricas.
+│   │   ├── alerts.py      # Gestión de estado y notificaciones.
+│   │   ├── network.py     # Capa de red (Smart Request, IPv4).
+│   │   └── database.py    # Persistencia SQLite.
+│   └── mocks/         # Mock Server para desarrollo local
+│       ├── server.py      # Servidor Python con Dashboard UI.
+│       └── templates/     # Interfaz web del Mock Controller.
+├── data/              # Volúmenes persistentes (DBs, logs)
+│   ├── metrics.db     # Base de datos SQLite del agente de producción.
+│   ├── metrics_dev.db # Base de datos SQLite del agente de desarrollo.
+│   └── mock_logs/     # Logs del Mock Server.
+├── docker-compose.prod.yml  # Orquestación para Producción.
+├── docker-compose.dev.yml   # Orquestación para Desarrollo (Agente + Mock).
+├── .env.prod.example        # Plantilla de variables de entorno para Producción.
+├── .env.dev.example         # Plantilla de variables de entorno para Desarrollo.
+└── ...
 ```
 
-### Descripción de Módulos
+### Descripción de Módulos (Heartbeat Agent)
 
-* **`main.py`**: Contiene el bucle principal de ejecución de la aplicación. Coordina la inicialización, la recolección de datos, el procesamiento de estado y la persistencia de métricas mediante la interacción con los demás módulos.
+* **`main.py`**: Contiene el bucle principal de ejecución de la aplicación. Coordina la inicialización, la recolección de datos, el procesamiento de estado y la persistencia de métricas.
 * **`config.py`**: Centraliza la lectura de variables de entorno, la definición de constantes globales y el parseo de la configuración de servicios a monitorizar.
-* **`monitors.py`**: Agrupa las funciones responsables de obtener datos del sistema (CPU, RAM, Disco), contar contenedores Docker y realizar las comprobaciones de salud de los servicios HTTP/HTTPS y Docker.
+* **`monitors.py`**: Agrupa las funciones responsables de obtener datos del sistema (CPU, RAM, Disco) y realizar los health checks HTTP/HTTPS y Docker.
 * **`alerts.py`**: Implementa la lógica de gestión de estado transitorio y estable, así como el mecanismo de envío de alertas a través de webhooks N8N y la comunicación de latidos al worker de Cloudflare.
-* **`network.py`**: Provee la capa de abstracción para las operaciones de red. Incluye la configuración de sesiones HTTP (forzando IPv4), y la función `smart_request` con su lógica de anulación de DNS interno.
-* **`database.py`**: Encapsula todas las operaciones relacionadas con la base de datos SQLite, incluyendo su inicialización (creación de tablas) y el guardado de las métricas recolectadas en cada ciclo.
+* **`network.py`**: Provee la capa de abstracción para red, incluyendo optimización de sesiones y la lógica `smart_request` para DNS Override.
+* **`database.py`**: Encapsula todas las operaciones relacionadas con la base de datos SQLite y el guardado de métricas recolectadas en cada ciclo.
 
 ## Arquitectura y Flujo de Ejecución
 
@@ -134,7 +148,7 @@ Para servicios de infraestructura (como Nginx, túneles, bases de datos) que no 
     SERVICE_URL_nginx="docker:mi-contenedor-nginx"
     ```
 
-* **Nota:** Requiere que el agente tenga acceso al socket de Docker (`/var/run/docker.sock`), lo cual ya está configurado por defecto en el `docker-compose.yml`.
+* **Nota:** Requiere que el agente tenga acceso al socket de Docker (`/var/run/docker.sock`).
 
 #### 2. Headers HTTP Personalizados
 
@@ -219,7 +233,30 @@ Todas las métricas se almacenan en una base de datos SQLite (`metrics.db`) con 
 
 ## Configuración y Despliegue
 
-1. **Clonar el repositorio:** `git clone https://github.com/iamseb4s/heartbeat-monitor.git && cd heartbeat-monitor`
-2. **Configurar `.env`:** Copia `.env.example` a `.env` y rellena `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES` y las `SERVICE_URL_*` correspondientes.
-3. **Ejecutar:** `docker compose up -d --build`
-4. **Ver Logs:** `docker compose logs -f monitor-agent`
+### Entorno de Producción
+
+1. **Clonar el repositorio:**
+
+    ```bash
+    git clone https://github.com/iamseb4s/heartbeat-monitor.git
+    cd heartbeat-monitor
+    ```
+
+2. **Configurar Variables:**
+    * Copia `.env.prod.example` a `.env.prod`.
+    * Rellena `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES` y las `SERVICE_URL_*` correspondientes.
+3. **Ejecutar:**
+
+    ```bash
+    docker compose -f docker-compose.prod.yml up -d --build
+    ```
+
+4. **Ver Logs:** `docker compose -f docker-compose.prod.yml logs -f monitor-agent`
+
+### Entorno de Desarrollo (Local + Mock)
+
+Para desarrollar sin afectar la base de datos de producción ni saturar el Worker real, utiliza el entorno aislado que incluye un **Mock Server**:
+
+1. **Configurar Variables:** Copia `.env.dev.example` a `.env.dev`.
+2. **Ejecutar:** `docker compose -f docker-compose.dev.yml up --build`
+3. **Controlar Mock Server:** Accede a **<http://localhost:8099>** para simular caídas, ver logs y forzar respuestas.
