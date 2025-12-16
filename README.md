@@ -63,28 +63,62 @@ The agent operates in a main loop, executing every 10 seconds, coordinating coll
 5. **Notification/Heartbeat:** If critical changes occur or a heartbeat is due, optimized JSON payloads are sent to external endpoints.
 6. **Persistence:** An atomic commit of all cycle metrics is made to the local database.
 
-## 📂 Code Structure
+## 📂 Code Structure (Monorepo)
 
-The project has been refactored from a monolithic script into a modular architecture based on Single Responsibility Principle (SRP):
+The project has evolved into a **Monorepo** architecture to manage both the main agent and auxiliary development tools:
 
 ```text
-app/
-├── main.py        # Main application orchestrator.
-├── config.py      # Configuration and environment variables management.
-├── monitors.py    # Metrics collection and health checks.
-├── alerts.py      # State management and notification sending.
-├── network.py     # Network infrastructure and requests configuration.
-└── database.py    # SQLite data persistence functionalities.
+/
+├── apps/
+│   ├── heartbeat/     # Monitoring Agent (Production Code)
+│   │   ├── main.py        # Main orchestrator.
+│   │   ├── config.py      # Configuration and env vars management.
+│   │   ├── monitors.py    # Health checks and metrics logic.
+│   │   ├── alerts.py      # State management and notifications.
+│   │   ├── network.py     # Network layer (Smart Request, IPv4).
+│   │   └── database.py    # SQLite persistence.
+│   └── mocks/         # Mock Server for local development
+│       ├── server.py      # Python Server with Dashboard UI.
+│       └── templates/     # Web interface for Mock Controller.
+├── data/              # Persistent volumes (DBs, logs)
+│   ├── metrics.db     # Production SQLite database.
+│   ├── metrics_dev.db # Development SQLite database.
+│   └── mock_logs/     # Mock Server logs.
+├── docker-compose.prod.yml  # Orchestration for Production.
+├── docker-compose.dev.yml   # Orchestration for Development (Agent + Mock).
+├── .env.prod.example        # Env vars template for Production.
+├── .env.dev.example         # Env vars template for Development.
+└── ...
 ```
 
-### Module Descriptions
+### Module Descriptions (Heartbeat Agent)
 
-* **`main.py`**: Contains the application's main execution loop. It coordinates initialization, data collection, state processing, and metric persistence by interacting with other modules.
-* **`config.py`**: Centralizes environment variable reading, global constant definitions, and parsing of service configuration for monitoring.
-* **`monitors.py`**: Groups the functions responsible for obtaining system data (CPU, RAM, Disk), counting Docker containers, and performing health checks for HTTP/HTTPS and Docker services.
-* **`alerts.py`**: Implements the logic for transient and stable state management, as well as the mechanism for sending alerts via N8N webhooks and heartbeat communication to the Cloudflare worker.
-* **`network.py`**: Provides the abstraction layer for network operations. Includes HTTP session configuration (forcing IPv4), and the `smart_request` function with its internal DNS override logic.
-* **`database.py`**: Encapsulates all operations related to the SQLite database, including its initialization (table creation) and the saving of collected metrics in each cycle.
+* **`main.py`**: Contains the application's main execution loop. It coordinates initialization, data collection, state processing, and metric persistence.
+* **`config.py`**: Centralizes environment variable reading, global constant definitions, and parsing of service configuration.
+* **`monitors.py`**: Groups the functions responsible for obtaining system data (CPU, RAM, Disk) and performing HTTP/HTTPS and Docker health checks.
+* **`alerts.py`**: Implements the logic for transient and stable state management, as well as notification mechanisms (N8N webhooks) and Cloudflare heartbeat communication.
+* **`network.py`**: Provides the abstraction layer for network operations, including session optimization and the `smart_request` logic for DNS Override.
+* **`database.py`**: Encapsulates all operations related to the SQLite database and the saving of collected metrics in each cycle.
+
+## Architecture and Execution Flow
+
+The agent operates in a main loop executed every `LOOP_INTERVAL_SECONDS` (currently 10 seconds). Execution is aligned with the system clock to ensure interval consistency (e.g., runs at :00, :10, :20 seconds, etc.).
+
+Each execution cycle follows a concurrency model to optimize time and avoid blocking:
+
+1. **Sequential CPU Task:** First, system metrics (`cpu_percent`, `ram_percent`, etc.) are collected using `psutil`. The call to `psutil.cpu_percent(interval=None)` is non-blocking and measures CPU usage since the last call.
+2. **Concurrent I/O Tasks:** Immediately after, a `ThreadPoolExecutor` is used to launch all network tasks (which are blocking by nature) in parallel. This includes:
+    * `check_services_health`: Verifies the status of all services defined in environment variables.
+    * `check_internet_and_ping`: Measures connectivity and latency to `google.com`.
+    * `get_container_count`: Connects to the Docker socket to count active containers.
+3. **Result Collection:** The script waits for all concurrent tasks to finish before continuing.
+4. **Heartbeat Sending:** With the check results, a payload is built and sent to the `HEARTBEAT_URL`.
+5. **State Processing and Alerting:** The worker and each service's status are analyzed to determine if a stable state change has occurred that requires notification.
+6. **Database Persistence:** Finally, all metrics and results of the cycle are saved to the SQLite database.
+
+### Cycle Time Estimation
+
+The use of `ThreadPoolExecutor` means that the I/O phase time is determined by the slowest task, not the sum of all tasks. The `cycle_duration_ms` stored in the database records the actual duration of each cycle for analysis.
 
 ## Monitoring Services
 
@@ -114,7 +148,7 @@ For infrastructure services (like Nginx, tunnels, databases) that do not expose 
     SERVICE_URL_nginx="docker:my-nginx-container"
     ```
 
-* **Note:** This requires the agent to have access to the Docker socket (`/var/run/docker.sock`), which is already configured by default in the `docker-compose.yml`.
+* **Note:** This requires the agent to have access to the Docker socket (`/var/run/docker.sock`).
 
 #### 2. Custom HTTP Headers
 
@@ -199,8 +233,37 @@ All metrics are stored in an SQLite database (`metrics.db`) with `WAL` mode enab
 
 ## Setup and Deployment
 
-1. **Clone the repository:** `git clone https://github.com/iamseb4s/heartbeat-monitor.git && cd heartbeat-monitor`
-2. **Configure `.env`:** Copy `.env.example` to `.env` and fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES`, and the corresponding `SERVICE_URL_*` values.
-3. **Run:** `docker compose up -d --build`
-4. **View Logs:** `docker compose logs -f monitor-agent`
-    * **Note on Logs:** To keep console logs clean, the `error` field is not displayed when a service is `healthy`. This field will only appear in logs and notifications when the service is `unhealthy` and has an associated error.
+### Production Environment
+
+1. **Clone the repository:**
+
+    ```bash
+    git clone https://github.com/iamseb4s/heartbeat-monitor.git
+    cd heartbeat-monitor
+    ```
+
+2. **Configure Variables:**
+    * Copy `.env.prod.example` to `.env.prod`.
+    * Fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES`, and the corresponding `SERVICE_URL_*` values.
+3. **Run:**
+
+    ```bash
+    docker compose -f docker-compose.prod.yml up -d --build
+    ```
+
+4. **View Logs:** `docker compose -f docker-compose.prod.yml logs -f monitor-agent`
+
+### Development Environment (Local + Mock)
+
+To develop without affecting the production database or saturating the real Worker, use the isolated environment which includes a **Mock Server**:
+
+1. **Configure Variables:**
+    * Copy `.env.dev.example` to `.env.dev`.
+    * By default, it is already configured to use the internal Mock Server and a separate DB (`metrics_dev.db`).
+2. **Run:**
+
+    ```bash
+    docker compose -f docker-compose.dev.yml up --build
+    ```
+
+3. **Control Mock Server:** Access **<http://localhost:8099>** to simulate outages, view logs, and force responses.
