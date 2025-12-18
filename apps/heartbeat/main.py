@@ -38,7 +38,9 @@ def main():
             time.sleep(wait_seconds)
             
             cycle_start_time = time.monotonic()
-            timestamp_lima = datetime.datetime.now(config.LIMA_TZ).isoformat()
+            now_lima = datetime.datetime.now(config.LIMA_TZ)
+            timestamp_lima = now_lima.isoformat()
+            timestamp_pretty = now_lima.strftime('%Y-%m-%d %H:%M:%S')
 
             # --- Collect System-Level Metrics ---
             sys_metrics = monitors.get_system_metrics()
@@ -103,10 +105,9 @@ def main():
             duration_str = str(datetime.timedelta(seconds=transient_cnt * config.LOOP_INTERVAL_SECONDS))
             
             log_msg = (
-                f"{timestamp_lima} - Metrics saved.\n"
+                f"Metrics saved at {timestamp_pretty}.\n"
                 f"  Services: {services_log_str}\n"
-                f"  Worker Status: Current: {worker_status or 'N/A'}. Stable: {worker_log.get('last_stable_status', 'N/A')}. "
-                f"Transient: {worker_log.get('transient_status', 'N/A')} ({duration_str} - {transient_cnt} cycles)."
+                f"  Worker Status: {worker_status or 'N/A'} ({worker_log.get('last_stable_status', 'N/A')} for {duration_str} - {transient_cnt} cycles). Cycle duration: {cycle_duration_ms}ms"
             )
             print(log_msg)
 
