@@ -371,3 +371,17 @@ h2 {
   gap: 0.5rem;
   transition: all 0.3s ease;
 }
+
+/* Live Mode Animation */
+@keyframes blink {
+  0% { opacity: 1; }
+  50% { opacity: 0.4; }
+  100% { opacity: 1; }
+}
+
+.time-filter-btn.live-active {
+  background-color: var(--input-background);
+  color: var(--text-primary);
+  border-color: var(--border-color);
+  animation: blink 2s infinite ease-in-out;
+}

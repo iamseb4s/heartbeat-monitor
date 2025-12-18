@@ -1,6 +1,6 @@
-const API_URL = ""; // TODO: Set your Backend URL here (e.g., "http://localhost:8000/api/metrics")
-const GRAPH_POINTS = 30;
+const API_URL = "/api/live"; 
 
+// Extended color palette for dynamic service charts
 const CHART_COLORS = [
   "#22c55e", "#3b82f6", "#f59e0b", "#ec4899", "#8b5cf6", 
   "#06b6d4", "#f97316", "#10b981", "#ef4444", "#a855f7", 
@@ -9,7 +9,7 @@ const CHART_COLORS = [
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("dashboardApp", () => {
-    // Non-reactive chart instances
+    // Stores ECharts instances (non-reactive for performance)
     const chartInstances = {
       host: {},
       general: {},
@@ -19,11 +19,11 @@ document.addEventListener("alpine:init", () => {
 
     return {
       activeTab: "general",
-      timeRange: "1h",
-      metrics: MOCK_METRICS,
-      scrolled: false, // Track scroll position for Toast
+      timeRange: "live",
+      metrics: MOCK_METRICS, // Initial placeholder
+      scrolled: false,
       
-      // Configuration for Generic Cards
+      // Generic card configuration for Agent and Network
       globalCards: [
         {
           id: 'agent',
@@ -62,25 +62,27 @@ document.addEventListener("alpine:init", () => {
 
         window.addEventListener("resize", () => this.resizeAll());
         
-        // Scroll Listener for Floating Toast
+        // Show floating toast on scroll
         window.addEventListener("scroll", () => {
             this.scrolled = window.scrollY > 150;
         });
 
+        // Trigger resize on tab switch to fix ECharts rendering
         this.$watch("activeTab", () => {
           this.$nextTick(() => this.resizeAll());
           setTimeout(() => this.resizeAll(), 50);
         });
 
         this.$watch("timeRange", () => {
-          this.mockState.initialized = false;
           this.fetchMetrics();
         });
 
+        // Start polling
+        this.fetchMetrics();
         setInterval(() => this.fetchMetrics(), 2000);
       },
 
-      // --- HELPERS ---
+      // --- Helpers ---
 
       formatTime(isoString) {
         if (!isoString) return "--:--";
@@ -107,7 +109,7 @@ document.addEventListener("alpine:init", () => {
         return { stats: {}, badgeLabel: '??', isHealthy: false };
       },
 
-      // --- CHART MANAGEMENT ---
+      // --- Chart Management ---
 
       resizeAll() {
         const all = [
@@ -137,7 +139,6 @@ document.addEventListener("alpine:init", () => {
         this.initInternetPieChart();
       },
 
-      // Dynamic Service Chart Sync
       syncServiceCharts() {
         this.metrics.services.forEach((svc, index) => {
           if (!chartInstances.services[svc.name]) {
@@ -157,7 +158,7 @@ document.addEventListener("alpine:init", () => {
         });
       },
 
-      // --- ECHARTS BUILDERS ---
+      // --- ECharts Builders ---
 
       getCommonOptions() {
         return {
@@ -169,7 +170,9 @@ document.addEventListener("alpine:init", () => {
             backgroundColor: "#1a1a1c",
             borderColor: "#27272a",
             textStyle: { color: "#fafafa" },
-            confine: true,
+            confine: false,
+            appendToBody: true,
+            extraCssText: 'z-index: 9999 !important;',
             axisPointer: { type: "line", lineStyle: { color: "#a1a1aa", type: "dashed" }, animation: false },
           },
           grid: { left: "2%", right: "2%", bottom: "5%", top: "5%", containLabel: true },
@@ -209,7 +212,7 @@ document.addEventListener("alpine:init", () => {
                 { offset: 1, color: "transparent" },
               ]),
             },
-            data: [] // Init empty
+            data: [] 
           }],
         });
         return chart;
@@ -233,18 +236,35 @@ document.addEventListener("alpine:init", () => {
         });
       },
 
-      initStatusPieChart() {
-        const dom = document.getElementById("statusPieChart");
-        if (!dom) return;
+      initGenericPie(domId, title, subtext, colorPalette) {
+        const dom = document.getElementById(domId);
+        if (!dom) return null;
         let chart = echarts.getInstanceByDom(dom);
         if (chart) chart.dispose();
         chart = echarts.init(dom);
-        chartInstances.general.pie = chart;
 
         chart.setOption({
           backgroundColor: "transparent",
-          tooltip: { trigger: "item", backgroundColor: "#1a1a1c", borderColor: "#27272a", textStyle: { color: "#fafafa" } },
-          title: { text: "0%", subtext: "Success", left: "center", top: "center", textStyle: { color: "#fafafa", fontSize: 18 }, subtextStyle: { color: "#a1a1aa", fontSize: 9 } },
+          tooltip: { 
+            trigger: "item", 
+            backgroundColor: "#1a1a1c", 
+            borderColor: "#27272a", 
+            textStyle: { color: "#fafafa" },
+            formatter: (params) => {
+              return `${params.marker} <span style="font-weight:bold">${params.name}</span>: ${params.value} (${params.percent}%)`;
+            },
+            confine: false,
+            appendToBody: true,
+            extraCssText: 'z-index: 9999 !important;'
+          },
+          title: { 
+            text: title, 
+            subtext: subtext, 
+            left: "center", 
+            top: "center", 
+            textStyle: { color: "#fafafa", fontSize: 16, fontWeight: "bold" }, 
+            subtextStyle: { color: "#a1a1aa", fontSize: 10 } 
+          },
           series: [{
             type: "pie",
             radius: ["60%", "85%"],
@@ -252,174 +272,42 @@ document.addEventListener("alpine:init", () => {
             itemStyle: { borderRadius: 4, borderColor: "#1a1a1c", borderWidth: 2 },
             label: { show: false },
             data: [],
-            color: ["#22c55e", "#f59e0b", "#ef4444"],
-          }],
-        });
-      },
-
-      initInternetPieChart() {
-        const dom = document.getElementById("internetPieChart");
-        if (!dom) return;
-        let chart = echarts.getInstanceByDom(dom);
-        if (chart) chart.dispose();
-        chart = echarts.init(dom);
-        chartInstances.general.internetPie = chart;
-        
-        // Initial setup only
-        chart.setOption({
-          backgroundColor: "transparent",
-          tooltip: { trigger: "item", backgroundColor: "#1a1a1c", borderColor: "#27272a", textStyle: { color: "#fafafa" }, formatter: "{b}: {c}%" },
-          title: { text: "--%", subtext: "Net Uptime", left: "center", top: "center", textStyle: { color: "#fafafa", fontSize: 16, fontWeight: "bold" }, subtextStyle: { color: "#a1a1aa", fontSize: 10 } },
-          series: [{
-            name: "Internet Status",
-            type: "pie",
-            radius: ["65%", "90%"],
-            avoidLabelOverlap: false,
-            itemStyle: { borderRadius: 2, borderColor: "#1a1a1c", borderWidth: 1 },
-            label: { show: false },
-            data: []
-          }]
-        });
-      },
-
-      initServicePie(domId, healthPercent) {
-        const dom = document.getElementById(domId);
-        if (!dom) return null;
-        let chart = echarts.getInstanceByDom(dom);
-        if (chart) chart.dispose();
-        chart = echarts.init(dom);
-        
-        // Initial setup only
-        chart.setOption({
-          backgroundColor: "transparent",
-          tooltip: { trigger: "item", backgroundColor: "#1a1a1c", borderColor: "#27272a", textStyle: { color: "#fafafa" }, formatter: "{b}: {c}%" },
-          title: { text: "--%", subtext: "Uptime", left: "center", top: "center", textStyle: { color: "#fafafa", fontSize: 16, fontWeight: "bold" }, subtextStyle: { color: "#a1a1aa", fontSize: 10 } },
-          series: [{
-            type: "pie",
-            radius: ["65%", "90%"],
-            avoidLabelOverlap: false,
-            itemStyle: { borderRadius: 2, borderColor: "#1a1a1c", borderWidth: 1 },
-            label: { show: false },
-            data: []
+            color: colorPalette
           }]
         });
         return chart;
       },
 
-      // --- DATA FETCHING & UPDATE ---
-
-      async fetchMetrics() {
-        // -----------------------------------------------------------------
-        // TODO: INTEGRATION POINT (Uncomment for production)
-        // try {
-        //   const response = await fetch(`${API_URL}?range=${this.timeRange}`);
-        //   const data = await response.json();
-        //   this.updateDashboard(data);
-        // } catch (e) { console.error("API Error", e); }
-        // -----------------------------------------------------------------
-
-        // --- MOCK DATA GENERATION ---
-        const now = new Date();
-        const rnd = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
-        const rndFloat = (min, max) => (Math.random() * (max - min) + min).toFixed(1);
-
-        // Helper to calculate stats from an array
-        const calculateStats = (arr) => {
-            const sorted = [...arr].sort((a, b) => a - b);
-            return {
-                max: sorted[sorted.length - 1],
-                min: sorted[0],
-                avg: (arr.reduce((a, b) => a + parseFloat(b), 0) / arr.length).toFixed(0),
-                p95: sorted[Math.floor(sorted.length * 0.95)]
-            };
-        };
-
-        // Initialize persistent mock history if missing
-        if (!this.mockState.initialized) {
-            this.mockState.times = Array.from({ length: GRAPH_POINTS }, (_, i) => {
-                const d = new Date(now - (GRAPH_POINTS - i) * 10000);
-                return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-            });
-            this.mockState.cpu = Array.from({ length: GRAPH_POINTS }, () => rndFloat(10, 30));
-            this.mockState.ram = Array.from({ length: GRAPH_POINTS }, () => rndFloat(40, 50));
-            this.mockState.disk = Array(GRAPH_POINTS).fill(60);
-            this.mockState.cycle = Array.from({ length: GRAPH_POINTS }, () => rnd(200, 350));
-            this.mockState.ping = Array.from({ length: GRAPH_POINTS }, () => rnd(10, 30));
-            
-            this.metrics.services.forEach(s => {
-                this.mockState.services[s.name] = Array.from({ length: GRAPH_POINTS }, () => rnd(20, 100));
-            });
-            this.mockState.initialized = true;
-        }
-
-        // Advance Time
-        const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
-        this.mockState.times.push(timeStr);
-        this.mockState.times.shift();
-
-        // Advance Metrics
-        const pushMetric = (arr, min, max, isFloat = false) => {
-            const last = parseFloat(arr[arr.length - 1]);
-            let next = last + (Math.random() * (max - min) * 0.2 - (max - min) * 0.1); 
-            if (next < min) next = min;
-            if (next > max) next = max;
-            arr.push(isFloat ? next.toFixed(1) : Math.floor(next));
-            arr.shift();
-        };
-
-        pushMetric(this.mockState.cpu, 10, 40, true);
-        pushMetric(this.mockState.ram, 40, 60, true);
-        
-        pushMetric(this.mockState.cycle, 200, 400);
-        pushMetric(this.mockState.ping, 10, 50);
-
-        Object.keys(this.mockState.services).forEach(key => {
-            pushMetric(this.mockState.services[key], 20, 150);
-        });
-
-        // Construct Response Object (Full Backend Snapshot)
-        const mockData = {
-          last_updated: now.toISOString(),
-          system: {
-              cpu: this.mockState.cpu[GRAPH_POINTS - 1],
-              ram: this.mockState.ram[GRAPH_POINTS - 1],
-              disk: 60,
-              containers: 5,
-              uptime: "14d"
-          },
-          monitor: {
-              worker_status: 200,
-              uptime: { "24h": rndFloat(99.0, 99.9) },
-              distribution: [{ value: rnd(85, 95), name: '200' }, { value: rnd(5, 15), name: '500' }],
-              stats: calculateStats(this.mockState.cycle) // Calculated from real history
-          },
-          network: {
-              internet_status: Math.random() > 0.05,
-              stats: calculateStats(this.mockState.ping) // Calculated from real history
-          },
-          services: this.metrics.services.map(s => ({
-              ...s,
-              status: Math.random() > 0.05 ? "healthy" : "unhealthy",
-              latency: this.mockState.services[s.name][GRAPH_POINTS - 1],
-              stats: calculateStats(this.mockState.services[s.name]) // Calculated from real history
-          })),
-          history: {
-            times: [...this.mockState.times],
-            system: { 
-                cpu: [...this.mockState.cpu], 
-                ram: [...this.mockState.ram], 
-                disk: [...this.mockState.disk] 
-            },
-            cycle_duration: [...this.mockState.cycle],
-            ping: [...this.mockState.ping],
-            services: { ...this.mockState.services }
-          }
-        };
-
-        this.updateDashboard(mockData);
+      initStatusPieChart() {
+        chartInstances.general.pie = this.initGenericPie(
+            "statusPieChart", "0%", "Success", ["#22c55e", "#f59e0b", "#ef4444"]
+        );
       },
 
-      // --- CORE UPDATE LOGIC ---
+      initInternetPieChart() {
+        chartInstances.general.internetPie = this.initGenericPie(
+            "internetPieChart", "--%", "Net Uptime", ["#22c55e", "#ef4444"]
+        );
+      },
+
+      initServicePie(domId, healthPercent) {
+        return this.initGenericPie(
+            domId, "--%", "Uptime", ["#22c55e", "#ef4444"]
+        );
+      },
+
+      // --- Core Data Logic ---
+
+      async fetchMetrics() {
+        try {
+          const response = await fetch(`${API_URL}?range=${this.timeRange}`);
+          if (!response.ok) throw new Error("Backend response error: " + response.status);
+          const data = await response.json();
+          this.updateDashboard(data);
+        } catch (e) { 
+          console.error("API Error - Failed to fetch metrics:", e); 
+        }
+      },
 
       updateDashboard(data) {
         this.metrics = data; 
@@ -434,27 +322,49 @@ document.addEventListener("alpine:init", () => {
         this.updateChart(chartInstances.general.cycle, times, data.history.cycle_duration);
         this.updateChart(chartInstances.general.ping, times, data.history.ping);
 
-        // 3. Status Pie
+        // 3. Status Pie (Worker Availability)
         if (chartInstances.general.pie && !chartInstances.general.pie.isDisposed()) {
-          const successVal = data.monitor.distribution.find(d => d.name === '200')?.value || 0;
+          const rangeKey = this.timeRange; 
+          const successPct = data.monitor.uptime[rangeKey] || 0;
+          
+          // Apply custom coloring logic: Green for 200, Palette for others
+          const coloredData = data.monitor.distribution.map((item, index) => {
+            let color;
+            if (item.name === "200") {
+                color = "#22c55e"; 
+            } else {
+                color = CHART_COLORS[(index + 1) % CHART_COLORS.length];
+            }
+            return {
+                value: item.value,
+                name: item.name,
+                itemStyle: { color: color }
+            };
+          });
+
           chartInstances.general.pie.setOption({
-             title: { text: successVal + "%" },
-             series: [{ data: data.monitor.distribution }]
+             title: { text: successPct + "%" },
+             series: [{ data: coloredData }]
           });
         }
 
-        // 4. Internet Pie
+        // 4. Internet Pie (Network Availability)
         if (chartInstances.general.internetPie && !chartInstances.general.internetPie.isDisposed()) {
-            const up = data.monitor.uptime["24h"] || 0;
-            const down = (100 - up).toFixed(1);
+            const upPct = data.network.uptime; 
+            
+            let pieData = [];
+            if (data.network.uptime_counts) {
+                pieData = [
+                    { value: data.network.uptime_counts.success, name: "Online", itemStyle: { color: "#22c55e" } },
+                    { value: data.network.uptime_counts.failure, name: "Offline", itemStyle: { color: "#ef4444" } }
+                ];
+            } else {
+                pieData = [{ value: 1, name: "No Data", itemStyle: { color: "#555" } }];
+            }
+
             chartInstances.general.internetPie.setOption({
-                title: { text: up + "%" },
-                series: [{ 
-                    data: [
-                        { value: up, name: "Online", itemStyle: { color: "#22c55e" } },
-                        { value: down, name: "Offline", itemStyle: { color: "#ef4444" } }
-                    ]
-                }]
+                title: { text: upPct + "%" },
+                series: [{ data: pieData }]
             });
         }
 
@@ -465,19 +375,20 @@ document.addEventListener("alpine:init", () => {
         this.syncServiceCharts(); 
         data.services.forEach(svc => {
             const seriesData = data.history.services[svc.name];
-            // Line
+            // Line chart
             this.updateChart(chartInstances.services[svc.name], times, seriesData);
             
-            // Pie
+            // Pie chart
             const pie = chartInstances.servicesPie[svc.name];
             if (pie && !pie.isDisposed()) {
-                const health = svc.status === 'healthy' ? 99 : 0; 
+                const healthPct = svc.stats.uptime; 
+                
                 pie.setOption({
-                    title: { text: health + "%" },
+                    title: { text: healthPct + "%" },
                     series: [{ 
                         data: [
-                            { value: health, name: "Healthy", itemStyle: { color: "#22c55e" } },
-                            { value: 100 - health, name: "Unhealthy", itemStyle: { color: "#ef4444" } }
+                            { value: svc.stats.success, name: "Healthy", itemStyle: { color: "#22c55e" } },
+                            { value: svc.stats.failure, name: "Unhealthy", itemStyle: { color: "#ef4444" } }
                         ]
                     }]
                 });
