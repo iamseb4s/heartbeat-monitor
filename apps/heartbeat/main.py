@@ -89,12 +89,13 @@ def main(run_once=False):
 
             # --- Save & Log ---
             cycle_duration_ms = int((time.monotonic() - cycle_start_time) * 1000)
-            services_health_db_log_str = json.dumps(services_health_full.get("services", {}))
+            
+            # Pass dictionary directly for new DB schema
             all_metrics = {
                 "timestamp_lima": timestamp_lima, **sys_metrics, "container_count": container_count,
                 "internet_ok": internet_ok, "ping_ms": ping_ms, "worker_status": worker_status, 
                 "cycle_duration_ms": cycle_duration_ms,
-                "services_health": services_health_db_log_str
+                "services_health": services_health_full.get("services", {})
             }
             database.save_metrics_to_db(all_metrics)
 

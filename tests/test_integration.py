@@ -46,16 +46,21 @@ def test_integration_full_cycle_with_db(tmp_path):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    cursor.execute("SELECT * FROM metrics")
-    row = cursor.fetchone()
+    # Check global cycle
+    cursor.execute("SELECT * FROM monitoring_cycles")
+    cycle = cursor.fetchone()
+    assert cycle is not None
+    assert cycle['internet_status'] == 1
+    assert cycle['worker_status'] == 200
     
-    assert row is not None
-    assert row['internet_ok'] == 1
-    assert row['worker_status'] == 200
+    # Check individual service detail
+    cursor.execute("SELECT * FROM service_checks WHERE cycle_id = ?", (cycle['id'],))
+    check = cursor.fetchone()
+    assert check is not None
+    assert check['service_name'] == 'api'
+    assert check['status'] == 'healthy'
+    assert check['latency_ms'] is not None
     
-    import json
-    services_health = json.loads(row['services_health'])
-    assert services_health['api']['status'] == 'healthy'
     conn.close()
 
 def test_integration_service_failure(tmp_path):
@@ -79,10 +84,14 @@ def test_integration_service_failure(tmp_path):
     conn = sqlite3.connect(str(db_file))
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
-    cursor.execute("SELECT services_health FROM metrics ORDER BY id DESC LIMIT 1")
+    
+    # Check for unhealthy status in service_checks
+    cursor.execute("SELECT * FROM service_checks ORDER BY id DESC LIMIT 1")
     row = cursor.fetchone()
     
-    import json
-    services_health = json.loads(row['services_health'])
-    assert services_health['api']['status'] == 'unhealthy'
+    assert row is not None
+    assert row['service_name'] == 'api'
+    assert row['status'] == 'unhealthy'
+    assert "HTTP 500" in row['error_message']
+    
     conn.close()
