@@ -16,7 +16,8 @@ import models
 import schemas
 
 # --- Configuration ---
-TARGET_DATA_POINTS = 30
+# Target number of data points for graph resolution (default: 30)
+TARGET_DATA_POINTS = int(os.getenv('TARGET_DATA_POINTS', 30))
 
 app = FastAPI(title="Heartbeat Dashboard API")
 

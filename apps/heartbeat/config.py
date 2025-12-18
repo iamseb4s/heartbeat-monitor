@@ -1,14 +1,22 @@
 import os
 import pytz
 
-# --- Constants ---
-LOOP_INTERVAL_SECONDS = 10
-LIMA_TZ = pytz.timezone('America/Lima')
-PING_URL = "http://www.google.com"
-STATUS_CHANGE_THRESHOLD = 4 # Number of consecutive identical statuses to consider a state "stable"
-SERVICE_TIMEOUT_SECONDS = 2 # Global timeout for service health checks (in seconds)
+# --- Operational Configuration ---
+# Configurable via environment variables with sensible defaults.
 
-# --- Environment Variables & Dynamic Config ---
+LIMA_TZ = pytz.timezone(os.getenv('TZ', 'America/Lima'))
+PING_URL = os.getenv('PING_URL', "http://www.google.com")
+
+# Main execution loop interval in seconds
+LOOP_INTERVAL_SECONDS = int(os.getenv('LOOP_INTERVAL_SECONDS', 10))
+
+# Threshold for consecutive status checks to confirm a state change (Debounce)
+STATUS_CHANGE_THRESHOLD = int(os.getenv('STATUS_CHANGE_THRESHOLD', 4))
+
+# Timeout for individual service health checks
+SERVICE_TIMEOUT_SECONDS = int(os.getenv('SERVICE_TIMEOUT_SECONDS', 2))
+
+# --- Environment Variables ---
 SECRET_KEY = os.getenv('SECRET_KEY')
 HEARTBEAT_URL = os.getenv('HEARTBEAT_URL')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
