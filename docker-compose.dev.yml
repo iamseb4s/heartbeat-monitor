@@ -1,15 +1,15 @@
 services:
-  mock-server:
+  heartbeat-mock-dev:
     build:
       context: ./apps/mocks
       dockerfile: Dockerfile
-    container_name: heartbeat-mock
+    container_name: heartbeat-mock-dev
     env_file:
       - ./.env.dev
     ports:
       - "8099:8080"
 
-  monitor-agent-dev:
+  heartbeat-agent-dev:
     build:
       context: ./apps/heartbeat
       dockerfile: Dockerfile
@@ -17,7 +17,7 @@ services:
     restart: "no"
     user: "1001:988"
     depends_on:
-      - mock-server
+      - heartbeat-mock-dev
     env_file:
       - ./.env.dev
     environment:
@@ -29,3 +29,19 @@ services:
       - ./tests:/app/tests
       - ./apps/heartbeat:/app
     command: /bin/sh -c "rm -f /app/data/metrics_dev.db && python main.py"
+
+  heartbeat-dashboard-dev:
+    build:
+      context: ./apps/dashboard/backend
+      dockerfile: Dockerfile
+    container_name: heartbeat-dashboard-dev
+    ports:
+      - "8098:8000"
+    env_file:
+      - ./.env.dev
+    volumes:
+      - ./data:/app/data:ro
+      - ./apps/dashboard/backend:/app
+      - ./apps/dashboard/frontend:/app/frontend
+    depends_on:
+      - heartbeat-agent-dev
