@@ -26,3 +26,5 @@ services:
     volumes:
       - ./data:/app/data
       - /var/run/docker.sock:/var/run/docker.sock
+      - ./tests:/app/tests
+      - ./apps/heartbeat:/app

@@ -2,3 +2,9 @@ requests
 psutil
 pytz
 docker
+
+# Testing
+pytest
+pytest-mock
+requests-mock
+freezegun

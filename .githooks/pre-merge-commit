@@ -1,0 +1,32 @@
+#!/bin/sh
+
+# ANSI colors
+GREEN='\033[0;32m'
+RED='\033[0;31m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+echo "${YELLOW}🚀 Running automated tests before merge...${NC}"
+
+# 1. Start Environment
+echo "${YELLOW}📦 Starting isolated dev environment...${NC}"
+# Use quiet output to avoid noise
+docker compose -f docker-compose.dev.yml up -d --quiet-pull
+
+# 2. Run Tests
+echo "${YELLOW}🧪 Executing test suite...${NC}"
+docker exec heartbeat-agent-dev sh -c "find . -name '__pycache__' -type d -exec rm -rf {} + && pytest"
+TEST_EXIT_CODE=$?
+
+# 3. Cleanup (Stop Environment)
+echo "${YELLOW}🧹 Cleaning up environment...${NC}"
+docker compose -f docker-compose.dev.yml down > /dev/null 2>&1
+
+# 4. Result Decision
+if [ $TEST_EXIT_CODE -ne 0 ]; then
+    echo "${RED}❌ Tests FAILED. Merge aborted.${NC}"
+    exit 1
+else
+    echo "${GREEN}✅ Tests PASSED. Proceeding with merge.${NC}"
+    exit 0
+fi

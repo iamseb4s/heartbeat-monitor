@@ -231,7 +231,20 @@ All metrics are stored in an SQLite database (`metrics.db`) with `WAL` mode enab
 | `cycle_duration_ms` | `INTEGER` | Duration of the monitoring cycle (ms). |
 | `services_health`| `TEXT` | JSON with detailed status, latency, and error info for each service. <br> Ex: `{"app": {"status": "healthy", "latency_ms": 25, "error": null}}` |
 
-## Setup and Deployment
+## 🧪 Testing
+
+The project includes a comprehensive suite of unit and integration tests to ensure the reliability of alerting logic, networking, and monitoring.
+
+* **Manual Execution:** Run the tests inside the development container:
+  ```bash
+  docker exec heartbeat-agent-dev pytest
+  ```
+* **Automation (Git Hook):** To execute tests automatically before each merge, enable the included hook:
+  ```bash
+  git config core.hooksPath .githooks
+  ```
+
+## 🛠️ Setup and Deployment
 
 ### Production Environment
 

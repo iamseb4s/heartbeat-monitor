@@ -16,7 +16,7 @@ psutil.cpu_percent(interval=None)
 # Variables globales (se moverán a config después si se requiere)
 global_states = alerts.global_states
 
-def main():
+def main(run_once=False):
     """Main monitoring loop with parallel data collection."""
     database.initialize_database()
     
@@ -110,8 +110,13 @@ def main():
                 f"  Worker Status: {worker_status or 'N/A'} ({worker_log.get('last_stable_status', 'N/A')} for {duration_str} - {transient_cnt} cycles). Cycle duration: {cycle_duration_ms}ms"
             )
             print(log_msg)
+            
+            if run_once:
+                break
 
         except Exception as e:
+            if run_once:
+                raise e
             print(f"An unexpected error occurred in the main loop: {e}")
             time.sleep(config.LOOP_INTERVAL_SECONDS)
 
