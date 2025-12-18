@@ -191,7 +191,7 @@ class MockHeartbeatHandler(http.server.BaseHTTPRequestHandler):
         self.wfile.write(json.dumps(data).encode('utf-8'))
 
 print(f"[MOCK] Starting Heartbeat Mock Server on port {PORT}...")
-print(f"[MOCK] Secret Key: {SECRET_KEY}")
+print(f"[MOCK] Secret Key: {'[LOADED]' if SECRET_KEY else '[MISSING]'}")
 print(f"[MOCK] Dashboard available at http://localhost:{PORT}/ (if port is mapped)")
 with socketserver.TCPServer(('', PORT), MockHeartbeatHandler) as httpd:
     httpd.serve_forever()
