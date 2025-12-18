@@ -28,3 +28,4 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock
       - ./tests:/app/tests
       - ./apps/heartbeat:/app
+    command: /bin/sh -c "rm -f /app/data/metrics_dev.db && python main.py"

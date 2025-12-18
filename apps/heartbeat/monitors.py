@@ -58,9 +58,19 @@ def _check_one_service(name, service_config, services_to_check_global):
     url = service_config['url']
     headers = service_config.get('headers', {}) # Get custom headers for the service
     
+    # Default structure for the result
+    result = {
+        "url": url,
+        "status": "unhealthy",
+        "status_code": None,
+        "latency_ms": None,
+        "error": None
+    }
+    
     if url.startswith("docker:"):
         if not docker_client:
-            return name, {"status": "unhealthy", "latency_ms": None, "error": "Docker client unavailable"}
+            result["error"] = "Docker client unavailable"
+            return name, result
         
         container_name = url.split(":", 1)[1].strip()
         start_time = time.monotonic()
@@ -68,33 +78,54 @@ def _check_one_service(name, service_config, services_to_check_global):
             container = docker_client.containers.get(container_name)
             if container.status == 'running':
                 latency_ms = int((time.monotonic() - start_time) * 1000)
-                return name, {"status": "healthy", "latency_ms": latency_ms, "error": None}
+                result.update({
+                    "status": "healthy",
+                    "latency_ms": latency_ms,
+                    "error": None
+                })
+                return name, result
             else:
-                return name, {"status": "unhealthy", "latency_ms": None, "error": f"Container state: {container.status}"}
+                result["error"] = f"Container state: {container.status}"
+                return name, result
         except docker.errors.NotFound:
-            return name, {"status": "unhealthy", "latency_ms": None, "error": "Container not found"}
+            result["error"] = "Container not found"
+            return name, result
         except Exception as e:
-            return name, {"status": "unhealthy", "latency_ms": None, "error": str(e)}
+            result["error"] = str(e)
+            return name, result
     else:
         try:
             # Pass custom headers to smart_request
             response = smart_request('HEAD', url, services_to_check_global, headers=headers, timeout=SERVICE_TIMEOUT_SECONDS)
             
+            if response:
+                result["status_code"] = response.status_code
+
             # Consider 2xx (OK) and 3xx (Redirects) as healthy
             if response and 200 <= response.status_code < 400:
                 latency_ms = int(response.elapsed.total_seconds() * 1000)
-                return name, {"status": "healthy", "latency_ms": latency_ms, "error": None}
+                result.update({
+                    "status": "healthy",
+                    "latency_ms": latency_ms,
+                    "error": None
+                })
+                return name, result
             else:
-                status_code = response.status_code if response is not None else "No Response"
-                return name, {"status": "unhealthy", "latency_ms": None, "error": f"HTTP {status_code}"}
+                status_desc = response.status_code if response is not None else "No Response"
+                result["error"] = f"HTTP {status_desc}"
+                return name, result
         except requests.exceptions.Timeout:
-             return name, {"status": "unhealthy", "latency_ms": None, "error": "Timeout"}
+             result["error"] = "Timeout"
+             return name, result
         except requests.exceptions.ConnectionError:
-             return name, {"status": "unhealthy", "latency_ms": None, "error": "Connection Error"}
+             result["error"] = "Connection Error"
+             return name, result
         except requests.exceptions.RequestException as e:
-            return name, {"status": "unhealthy", "latency_ms": None, "error": str(e)}
+            result["error"] = str(e)
+            return name, result
         except Exception as e:
-            return name, {"status": "unhealthy", "latency_ms": None, "error": str(e)}
+            result["error"] = str(e)
+            return name, result
 
 def check_services_health(executor, services_to_check_config):
     """Checks the health of configured services in parallel."""
