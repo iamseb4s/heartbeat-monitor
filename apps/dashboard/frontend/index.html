@@ -26,7 +26,7 @@
         style="display: none;"
     >
         <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-clock"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
-        <span x-text="'Updated: ' + formatTime(metrics.last_updated)">--:--</span>
+        <span x-text="'Updated: ' + metrics.last_updated">--:--</span>
     </div>
 
     <main class="main-content">
@@ -37,7 +37,7 @@
 
           <div
             class="beat-last-update"
-            x-text="'Last Update: ' + formatTime(metrics.last_updated)"
+            x-text="'Last Update: ' + metrics.last_updated"
             style="margin-bottom: 1rem;"
           >
             --:--
@@ -102,6 +102,13 @@
 
       <!-- Time Range Selector -->
       <div class="toolbar-container">
+        <button
+          class="time-filter-btn"
+          :class="timeRange === 'live' ? 'active live-active' : ''"
+          @click="timeRange = 'live'"
+        >
+          Live
+        </button>
         <button
           class="time-filter-btn"
           :class="timeRange === '1h' ? 'active' : ''"
@@ -205,10 +212,10 @@
                     >
                   </div>
                   <div class="stat-row">
-                    <span class="stat-label">P95</span>
+                    <span class="stat-label">JITTER</span>
                     <span
                       class="stat-val"
-                      x-text="getCardData(card.id).stats.p95 + 'ms'"
+                      x-text="getCardData(card.id).stats.jitter + 'ms'"
                       >--</span
                     >
                   </div>
@@ -300,8 +307,8 @@
                       ><span class="stat-val" x-text="service.stats ? service.stats.min + 'ms' : '--'"></span>
                     </div>
                     <div class="stat-row">
-                      <span class="stat-label">P95</span
-                      ><span class="stat-val" x-text="service.stats ? service.stats.p95 + 'ms' : '--'"></span>
+                      <span class="stat-label">JITTER</span
+                      ><span class="stat-val" x-text="service.stats ? service.stats.jitter + 'ms' : '--'"></span>
                     </div>
                   </div>
 
