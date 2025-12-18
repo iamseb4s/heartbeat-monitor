@@ -28,6 +28,7 @@ def initialize_database():
                 ram_percent REAL NOT NULL,
                 ram_used_mb REAL NOT NULL,
                 disk_percent REAL NOT NULL,
+                uptime_seconds REAL,
                 container_count INTEGER NOT NULL,
                 internet_status BOOLEAN NOT NULL,
                 ping_ms REAL,
@@ -75,10 +76,10 @@ def save_metrics_to_db(metrics):
         cur.execute("""
             INSERT INTO monitoring_cycles (
                 id, timestamp_lima, cpu_percent, ram_percent, ram_used_mb, 
-                disk_percent, container_count, internet_status, ping_ms, 
+                disk_percent, uptime_seconds, container_count, internet_status, ping_ms, 
                 worker_status, cycle_duration_ms
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""", 
             (
                 cycle_id,
                 metrics['timestamp_lima'],
@@ -86,6 +87,7 @@ def save_metrics_to_db(metrics):
                 metrics['ram_percent'],
                 metrics['ram_used_mb'], 
                 metrics['disk_percent'],
+                metrics.get('uptime_seconds'),
                 metrics['container_count'],
                 metrics['internet_ok'], 
                 metrics['ping_ms'], 
