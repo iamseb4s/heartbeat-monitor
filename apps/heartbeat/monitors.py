@@ -18,15 +18,20 @@ except Exception as e:
     docker_client = None
 
 def get_system_metrics():
-    """Collects and rounds CPU, RAM, and Disk metrics."""
+    """Collects and rounds CPU, RAM, Disk metrics, and calculates Uptime."""
     cpu_percent = psutil.cpu_percent(interval=None) 
     ram = psutil.virtual_memory()
     disk = psutil.disk_usage('/')
+    
+    # Calculate uptime in seconds
+    uptime_seconds = time.time() - psutil.boot_time()
+
     return {
         "cpu_percent": round(cpu_percent, 2),
         "ram_percent": round(ram.percent, 2),
         "ram_used_mb": round(ram.used / (1024 * 1024), 2),
-        "disk_percent": round(disk.percent, 2)
+        "disk_percent": round(disk.percent, 2),
+        "uptime_seconds": int(uptime_seconds)
     }
 
 def get_container_count():
