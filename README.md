@@ -1,13 +1,51 @@
-# Heartbeat Monitor: High-Performance Monitoring Agent
+# Heartbeat Monitor: High-Performance Monitoring Agent & Dashboard
 
 <p align="center">
   <img src="https://img.shields.io/badge/Python-3.14-blue.svg" alt="Python 3.14">
+  <img src="https://img.shields.io/badge/FastAPI-0.109-009688.svg" alt="FastAPI">
+  <img src="https://img.shields.io/badge/AlpineJS-3.x-8bc34a.svg" alt="AlpineJS">
   <img src="https://img.shields.io/badge/Docker-passing-brightgreen.svg" alt="Docker Build Status">
 </p>
 
-A lightweight, modular, and concurrent monitoring agent specifically designed for Dockerized environments. This system not only verifies availability but also optimizes network latency and manages service states with a resilient architecture.
+A lightweight, modular, and concurrent observability system specifically designed for Dockerized environments. This system not only verifies availability but also optimizes network latency, manages service states with a resilient architecture, and offers real-time visualization.
 
 Developed in **Python 3.14 (Alpine)**, focused on resource efficiency and metric precision.
+
+## 📊 Analytics Dashboard
+
+The system includes a modern control panel to visualize your infrastructure health.
+
+* **Frontend:** Built with **AlpineJS** and **ECharts**. Lightweight, no complex build-step, with real-time updates ("Live Mode") and **Jitter** visualization.
+* **Backend:** High-performance RESTful API powered by **FastAPI**. Implements **Dynamic Resolution** (`TARGET_DATA_POINTS = 30`) to ensure fluid charts regardless of the queried time range (from 5 minutes to 30 days).
+
+## 🏗️ System Architecture
+
+The system uses a **decoupled Producer-Consumer pattern** via a shared database.
+
+```ascii
++----------------------+           +--------------------------+
+|   HEARTBEAT AGENT    |  (Write)  |       SQLITE (WAL)       |
+| (Python / Producer)  |---------->|   (Hybrid Persistence)   |
++----------------------+           +--------------------------+
+          ^                                     ^
+          | (10s Loop)                          |
+          |                                     | (Read-Only :ro)
++----------------------+           +--------------------------+
+|  Services / Docker   |           |    DASHBOARD BACKEND     |
+| (Monitoring Targets) |           |  (FastAPI / Consumer)    |
++----------------------+           +--------------------------+
+                                                ^
+                                                | (JSON / REST)
+                                                v
+                                   +--------------------------+
+                                   |    DASHBOARD FRONTEND    |
+                                   |   (AlpineJS / ECharts)   |
+                                   +--------------------------+
+```
+
+1. **Agent (Write):** Has exclusive write access to the DB. Uses WAL mode to prevent blocking reads.
+2. **Dashboard (Read):** Mounts the data volume as `read-only` (`:ro`). If the agent goes down, the dashboard continues to show historical data.
+3. **Frontend:** Consumes the backend API using intelligent *polling* (every 2s in Live mode).
 
 ## 🚀 Key Technical Features
 
@@ -65,29 +103,32 @@ The agent operates in a main loop, executing every 10 seconds, coordinating coll
 
 ## 📂 Code Structure (Monorepo)
 
-The project has evolved into a **Monorepo** architecture to manage both the main agent and auxiliary development tools:
+The project has evolved into a **Monorepo** architecture to manage both the main agent and visualization/development tools:
 
 ```text
 /
 ├── apps/
-│   ├── heartbeat/     # Monitoring Agent (Production Code)
+│   ├── heartbeat/     # Monitoring Agent (Python Service)
 │   │   ├── main.py        # Main orchestrator.
-│   │   ├── config.py      # Configuration and env vars management.
+│   │   ├── config.py      # Configuration management.
 │   │   ├── monitors.py    # Health checks and metrics logic.
 │   │   ├── alerts.py      # State management and notifications.
 │   │   ├── network.py     # Network layer (Smart Request, IPv4).
 │   │   └── database.py    # SQLite persistence.
+│   ├── dashboard/     # Visualization Panel (New)
+│   │   ├── backend/       # FastAPI API for analytics.
+│   │   └── frontend/      # Reactive UI (AlpineJS + ECharts).
 │   └── mocks/         # Mock Server for local development
-│       ├── server.py      # Python Server with Dashboard UI.
-│       └── templates/     # Web interface for Mock Controller.
+│       ├── server.py      # Python test server.
+│       └── templates/     # Mock Controller UI.
 ├── data/              # Persistent volumes (DBs, logs)
-│   ├── metrics.db     # Production SQLite database.
-│   ├── metrics_dev.db # Development SQLite database.
-│   └── mock_logs/     # Mock Server logs.
-├── docker-compose.prod.yml  # Orchestration for Production.
-├── docker-compose.dev.yml   # Orchestration for Development (Agent + Mock).
-├── .env.prod.example        # Env vars template for Production.
-├── .env.dev.example         # Env vars template for Development.
+│   ├── metrics.db     # Production database.
+│   ├── metrics_dev.db # Development database.
+│   └── ...
+├── docker-compose.prod.yml  # Production Stack (Agent + Dashboard).
+├── docker-compose.dev.yml   # Development Stack (Agent + Dashboard + Mock).
+├── .env.prod.example        # Production env template.
+├── .env.dev.example         # Development env template.
 └── ...
 ```
 
@@ -99,26 +140,6 @@ The project has evolved into a **Monorepo** architecture to manage both the main
 * **`alerts.py`**: Implements the logic for transient and stable state management, as well as notification mechanisms (N8N webhooks) and Cloudflare heartbeat communication.
 * **`network.py`**: Provides the abstraction layer for network operations, including session optimization and the `smart_request` logic for DNS Override.
 * **`database.py`**: Encapsulates all operations related to the SQLite database and the saving of collected metrics in each cycle.
-
-## Architecture and Execution Flow
-
-The agent operates in a main loop executed every `LOOP_INTERVAL_SECONDS` (currently 10 seconds). Execution is aligned with the system clock to ensure interval consistency (e.g., runs at :00, :10, :20 seconds, etc.).
-
-Each execution cycle follows a concurrency model to optimize time and avoid blocking:
-
-1. **Sequential CPU Task:** First, system metrics (`cpu_percent`, `ram_percent`, etc.) are collected using `psutil`. The call to `psutil.cpu_percent(interval=None)` is non-blocking and measures CPU usage since the last call.
-2. **Concurrent I/O Tasks:** Immediately after, a `ThreadPoolExecutor` is used to launch all network tasks (which are blocking by nature) in parallel. This includes:
-    * `check_services_health`: Verifies the status of all services defined in environment variables.
-    * `check_internet_and_ping`: Measures connectivity and latency to `google.com`.
-    * `get_container_count`: Connects to the Docker socket to count active containers.
-3. **Result Collection:** The script waits for all concurrent tasks to finish before continuing.
-4. **Heartbeat Sending:** With the check results, a payload is built and sent to the `HEARTBEAT_URL`.
-5. **State Processing and Alerting:** The worker and each service's status are analyzed to determine if a stable state change has occurred that requires notification.
-6. **Database Persistence:** Finally, all metrics and results of the cycle are saved to the SQLite database.
-
-### Cycle Time Estimation
-
-The use of `ThreadPoolExecutor` means that the I/O phase time is determined by the slowest task, not the sum of all tasks. The `cycle_duration_ms` stored in the database records the actual duration of each cycle for analysis.
 
 ## Monitoring Services
 
@@ -142,12 +163,7 @@ The monitor supports advanced features to cover complex use cases, such as inter
 For infrastructure services (like Nginx, tunnels, databases) that do not expose an easily accessible HTTP port, you can use the `docker:` protocol. This directly verifies if the container is in a `running` state.
 
 * **Syntax:** `SERVICE_URL_<name>="docker:<container_name>"`
-* **Example:**
-
-    ```bash
-    SERVICE_URL_nginx="docker:my-nginx-container"
-    ```
-
+* **Example:** `SERVICE_URL_nginx="docker:my-nginx-container"`
 * **Note:** This requires the agent to have access to the Docker socket (`/var/run/docker.sock`).
 
 #### 2. Custom HTTP Headers
@@ -158,7 +174,6 @@ Some health endpoints require authentication or specific headers to respond corr
 * **Example:**
 
     ```bash
-    # Checks an endpoint that requires a special token or flag
     SERVICE_URL_api="https://my-api.com/health"
     SERVICE_HEADERS_api="x-health-check:true,Authorization:Bearer my-token"
     ```
@@ -201,7 +216,7 @@ The system sends alerts to the `N8N_WEBHOOK_URL` under the following conditions,
     * If sending the alert fails (e.g., webhook timeout), the system automatically retries up to **3 times** before giving up, ensuring critical alerts reach their destination.
 
 2. **Enriched Alerts:**
-    * **Service Down:** Includes the specific reason for the failure (e.g., `HTTP 500`, `Timeout`, `Container Exited`) to facilitate immediate diagnosis.
+    * **Service Down:** Includes the specific reason for the failure (e.g., `HTTP 500`, `Timeout`, `Container Exited`) for facilitate immediate diagnosis.
     * **Service Recovered:** Shows the current latency of the service upon recovery.
     * **Timestamp:** All alerts include the exact date and time of the event (configured timezone) for accurate auditing.
 
@@ -212,37 +227,101 @@ The system sends alerts to the `N8N_WEBHOOK_URL` under the following conditions,
 
 This mechanism ensures that only confirmed state changes are notified, applying consistent logic to all monitored elements.
 
-## Data Persistence (Database)
+## 💾 Data Persistence (Relational Schema)
 
-All metrics are stored in an SQLite database (`metrics.db`) with `WAL` mode enabled to improve write/read concurrency.
+The system uses **SQLite** in **WAL (Write-Ahead Logging)** mode to allow high-concurrency writes from the agent and simultaneous reads from the dashboard without locking. The schema has been normalized to support efficient analytical queries.
+
+### Table 1: `monitoring_cycles` (Global Facts)
+
+Stores one row per execution cycle (10s).
 
 | Column | Type | Description |
 | :--- | :--- | :--- |
-| `id` | `TEXT` | Unique UUID of the record. |
-| `timestamp_lima`| `TEXT` | ISO8601 timestamp (Lima timezone). |
-| `cpu_percent` | `REAL` | CPU usage. |
-| `ram_percent` | `REAL` | RAM usage (%). |
-| `ram_used_mb` | `REAL` | Used RAM (MB). |
-| `disk_percent`| `REAL` | Root disk usage (%). |
-| `container_count`| `INTEGER`| Active Docker containers. |
-| `internet_ok` | `INTEGER`| `1` if connected, `0` otherwise. |
-| `ping_ms` | `REAL` | Latency to `google.com`. |
-| `worker_status` | `INTEGER` | HTTP status code returned by the Cloudflare Worker API. Reflects the outcome of the heartbeat processing. <br> - `200`: **Success**. Heartbeat received, processed, and host/service status was updated. Can indicate a "recorded" (no change) or "recovered" state. <br> - `220`: **Warning (Blind)**. Heartbeat received and timestamp updated, but the API could not read the *previous* state from its database. Unable to determine if a recovery occurred. <br> - `221`: **Warning (Recovery Update Failed)**. A recovery was detected, but the API failed to update its own state or send the notification. <br> - `500`: **Critical Worker Error**. The API failed an essential step (e.g., writing the initial timestamp) and the heartbeat was aborted. <br> - `NULL`: **Local Agent Error**. The monitoring script failed to contact the worker API (e.g., timeout, network error, DNS issue). |
-| `cycle_duration_ms` | `INTEGER` | Duration of the monitoring cycle (ms). |
-| `services_health`| `TEXT` | JSON with detailed status, latency, and error info for each service. <br> Ex: `{"app": {"status": "healthy", "latency_ms": 25, "error": null}}` |
+| `id` | `TEXT (PK)` | Unique cycle UUID. |
+| `timestamp_lima`| `TEXT` | ISO8601 Timestamp (Indexed). |
+| `cpu_percent` | `REAL` | Global CPU usage. |
+| `ram_percent` | `REAL` | Global RAM usage. |
+| `disk_percent`| `REAL` | Root disk usage. |
+| `uptime_seconds`| `REAL` | Host system uptime. |
+| `container_count`| `INTEGER`| Total running Docker containers. |
+| `internet_status` | `BOOLEAN`| `1` (Online) / `0` (Offline). |
+| `ping_ms` | `REAL` | Internet latency (ICMP/HTTP Ping). |
+| `worker_status` | `INTEGER` | HTTP code from Cloudflare Worker (Heartbeat). <br> - `200`: **Success**. Heartbeat received and processed. <br> - `220`: **Warning (Blind)**. Received but previous state unknown. <br> - `221`: **Warning (Recovery Update Failed)**. Recovery detected but state update failed. <br> - `500`: **Critical Worker Error**. Essential step failed. <br> - `NULL`: **Local Agent Error**. Communication failed (timeout, network, DNS). |
+| `cycle_duration_ms` | `INTEGER` | Total cycle execution time. |
 
-## 🧪 Testing
+### Table 2: `service_checks` (Service Details)
 
-The project includes a comprehensive suite of unit and integration tests to ensure the reliability of alerting logic, networking, and monitoring.
+Stores individual status for each monitored service per cycle. 1:N relationship with `monitoring_cycles`.
 
-* **Manual Execution:** Run the tests inside the development container:
-  ```bash
-  docker exec heartbeat-agent-dev pytest
-  ```
-* **Automation (Git Hook):** To execute tests automatically before each merge, enable the included hook:
-  ```bash
-  git config core.hooksPath .githooks
-  ```
+| Column | Type | Description |
+| :--- | :--- | :--- |
+| `id` | `INTEGER (PK)` | Auto-incremental. |
+| `cycle_id` | `TEXT (FK)` | Reference to `monitoring_cycles.id`. |
+| `service_name` | `TEXT` | Service name (Indexed). |
+| `service_url` | `TEXT` | Verified endpoint. |
+| `status` | `TEXT` | `'healthy'` or `'unhealthy'`. |
+| `latency_ms` | `REAL` | Service response time. |
+| `status_code` | `INTEGER` | HTTP response code (e.g., 200, 500). |
+| `error_message` | `TEXT` | Error detail (Timeout, Connection Refused). |
+
+## 🔌 Dashboard API (Backend)
+
+The dashboard backend exposes a REST API optimized for real-time and historical metric consumption.
+
+### `GET /api/live`
+
+Returns the current system status and historical time series.
+
+* **Parameters:**
+  * `range` (Query, optional): Time window. Options: `live` (5m), `1h`, `12h`, `24h`, `7d`, `30d`. Default: `1h`.
+
+* **Optimization (Dynamic Resolution):**
+  The backend automatically applies a downsampling algorithm based on the `TARGET_DATA_POINTS = 30` constant.
+  * If you request `24h`, data is grouped into ~48-minute buckets.
+  * If you request `live` (5m), data is returned in 10-second buckets (raw data).
+  * **Benefit:** The frontend always receives ~30 points, keeping rendering fast and lightweight.
+
+* **Included Metrics:**
+  * **Jitter:** Calculated as `MAX(latency) - MIN(latency)` per bucket.
+  * **Uptime %:** Calculated over total cycles in the range.
+  * **Error Distribution:** Counts grouped by status codes.
+
+## ⚙️ Configuration & Env Variables
+
+System behavior is centrally controlled via environment variables (`.env` files).
+
+### 🔧 Operational Configuration (Advanced)
+
+| Variable | Description | Default |
+| :--- | :--- | :--- |
+| `LOOP_INTERVAL_SECONDS` | Agent main loop interval (in seconds). | `10` |
+| `STATUS_CHANGE_THRESHOLD` | Confirmation threshold for state changes (Debounce). | `4` |
+| `SERVICE_TIMEOUT_SECONDS` | Maximum wait time for each service health check. | `2` |
+| `TARGET_DATA_POINTS` | Point density in dashboard charts (Bucketing). | `30` |
+| `TZ` | System timezone (e.g., `America/Lima`). | `UTC` |
+
+### 🔑 Credentials & Endpoints
+
+| Variable | Required | Description | Example |
+| :--- | :---: | :--- | :--- |
+| `SECRET_KEY` | **Yes** | Shared key to authenticate with the Cloudflare Worker. | `sk_12345abcdef` |
+| `HEARTBEAT_URL` | **Yes** | Cloudflare Worker endpoint URL for heartbeats. | `https://worker.dev/api/heartbeat` |
+| `N8N_WEBHOOK_URL` | No | Webhook URL for external alerts (Slack, Discord, etc). | `https://n8n.mi-server.com/...` |
+| `SQLITE_DB_PATH` | No | Internal path for the SQLite database file. | `data/metrics.db` |
+
+### 🔍 Service Monitoring
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `SERVICE_NAMES` | Comma-separated list of service identifiers. | `api,webapp,db_primary` |
+| `SERVICE_URL_{NAME}` | Target URL for health check. Supports `http(s)://` and `docker:`. | `docker:postgres-container` |
+| `SERVICE_HEADERS_{NAME}`| Optional HTTP headers (Auth, User-Agent, etc.). | `Authorization:Bearer xyz` |
+
+### 🌐 Advanced Networking
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `INTERNAL_DNS_OVERRIDE_IP` | IP to force local DNS resolution. Useful for Docker setups. | `172.17.0.1` |
 
 ## 🛠️ Setup and Deployment
 
@@ -257,26 +336,37 @@ The project includes a comprehensive suite of unit and integration tests to ensu
 
 2. **Configure Variables:**
     * Copy `.env.prod.example` to `.env.prod`.
-    * Fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES`, and the corresponding `SERVICE_URL_*` values.
+    * Fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES`, and corresponding `SERVICE_URL_*`.
 3. **Run:**
 
     ```bash
     docker compose -f docker-compose.prod.yml up -d --build
     ```
 
-4. **View Logs:** `docker compose -f docker-compose.prod.yml logs -f monitor-agent`
+4. **Access:**
+    * **Dashboard:** `http://localhost:8098` (or configured IP/domain).
+    * **Agent Logs:** `docker logs -f heartbeat-agent-prod`
 
 ### Development Environment (Local + Mock)
 
-To develop without affecting the production database or saturating the real Worker, use the isolated environment which includes a **Mock Server**:
+1. **Configure Variables:** Copy `.env.dev.example` to `.env.dev`.
+2. **Run:** `docker compose -f docker-compose.dev.yml up --build`
+3. **Available Tools:**
+    * **Dashboard:** **<http://localhost:8098>** - Real-time metrics visualization.
+    * **Mock Controller:** **<http://localhost:8099>** - Simulate outages, view logs, and force responses.
 
-1. **Configure Variables:**
-    * Copy `.env.dev.example` to `.env.dev`.
-    * By default, it is already configured to use the internal Mock Server and a separate DB (`metrics_dev.db`).
-2. **Run:**
+## 🧪 Testing
 
-    ```bash
-    docker compose -f docker-compose.dev.yml up --build
-    ```
+The project includes a comprehensive suite of unit and integration tests.
 
-3. **Control Mock Server:** Access **<http://localhost:8099>** to simulate outages, view logs, and force responses.
+* **Manual Execution:** Run tests inside the development container:
+
+  ```bash
+  docker exec heartbeat-agent-dev pytest
+  ```
+
+* **Automation (Git Hook):** To execute tests automatically before each merge, enable the included hook:
+
+  ```bash
+  git config core.hooksPath .githooks
+  ```
