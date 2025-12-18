@@ -100,7 +100,17 @@ def main(run_once=False):
             database.save_metrics_to_db(all_metrics)
 
             # --- Log Cycle Summary ---
-            services_log_str = ", ".join([f'"{name}": {json.dumps({k: v for k, v in data.items() if v is not None and not (k=="error" and data.get("status")=="healthy")})}' for name, data in services_health_full.get("services", {}).items()])
+            # Visual formatting for console logs: name 🔵 - 5ms or name 🔴 - error: msg
+            log_items = []
+            for name, data in services_health_full.get("services", {}).items():
+                if data['status'] == 'healthy':
+                    latency = data.get('latency_ms', 0)
+                    log_items.append(f"{name} 🔵 - {latency}ms")
+                else:
+                    error = data.get('error', 'Unknown error')
+                    log_items.append(f"{name} 🔴 - error: {error}")
+            
+            services_log_str = "   |   ".join(log_items)
             worker_log = alerts.global_states.get('worker', {})
             transient_cnt = worker_log.get('transient_counter', 0)
             duration_str = str(datetime.timedelta(seconds=transient_cnt * config.LOOP_INTERVAL_SECONDS))
