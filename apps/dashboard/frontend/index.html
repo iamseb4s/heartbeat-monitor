@@ -1,0 +1,373 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Heartbeat Dashboard</title>
+    <script
+      defer
+      src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"
+    ></script>
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+    <link rel="stylesheet" href="css/style.css" />
+  </head>
+  <body x-data="dashboardApp()">
+    
+    <!-- Floating Update Toast (Visible on scroll) -->
+    <div 
+        class="floating-update-toast" 
+        x-show="scrolled" 
+        x-transition:enter="transition ease-out duration-300"
+        x-transition:enter-start="opacity-0 -translate-y-4"
+        x-transition:enter-end="opacity-100 translate-y-0"
+        x-transition:leave="transition ease-in duration-200"
+        x-transition:leave-start="opacity-100 translate-y-0"
+        x-transition:leave-end="opacity-0 -translate-y-4"
+        style="display: none;"
+    >
+        <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" class="feather feather-clock"><circle cx="12" cy="12" r="10"></circle><polyline points="12 6 12 12 16 14"></polyline></svg>
+        <span x-text="'Updated: ' + formatTime(metrics.last_updated)">--:--</span>
+    </div>
+
+    <main class="main-content">
+      <!-- Host Metrics Section -->
+      <div class="card">
+        <div class="host-header-container">
+          <h1 class="host-title">Heartbeat Monitor</h1>
+
+          <div
+            class="beat-last-update"
+            x-text="'Last Update: ' + formatTime(metrics.last_updated)"
+            style="margin-bottom: 1rem;"
+          >
+            --:--
+          </div>
+
+          <div class="host-pills">
+            <div class="info-pill">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <path
+                  d="M21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16z"
+                ></path>
+                <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
+                <line x1="12" y1="22.08" x2="12" y2="12"></line>
+              </svg>
+              <span x-text="metrics.system.containers + ' Containers'">--</span>
+            </div>
+            <div class="info-pill">
+              <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="14"
+                height="14"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+              >
+                <circle cx="12" cy="12" r="10"></circle>
+                <polyline points="12 6 12 12 16 14"></polyline>
+              </svg>
+              <span x-text="'Uptime: ' + metrics.system.uptime">--</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="host-charts-grid">
+          <div class="mini-chart-wrapper">
+            <span class="mini-chart-title">CPU Usage</span>
+            <div id="cpuChart" class="chart-h-small"></div>
+          </div>
+          <div class="mini-chart-wrapper">
+            <span class="mini-chart-title">RAM Usage</span>
+            <div id="ramChart" class="chart-h-small"></div>
+          </div>
+          <div class="mini-chart-wrapper">
+            <span class="mini-chart-title">Disk Usage</span>
+            <div id="diskChart" class="chart-h-small"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Time Range Selector -->
+      <div class="toolbar-container">
+        <button
+          class="time-filter-btn"
+          :class="timeRange === '1h' ? 'active' : ''"
+          @click="timeRange = '1h'"
+        >
+          1h
+        </button>
+        <button
+          class="time-filter-btn"
+          :class="timeRange === '12h' ? 'active' : ''"
+          @click="timeRange = '12h'"
+        >
+          12h
+        </button>
+        <button
+          class="time-filter-btn"
+          :class="timeRange === '24h' ? 'active' : ''"
+          @click="timeRange = '24h'"
+        >
+          24h
+        </button>
+        <button
+          class="time-filter-btn"
+          :class="timeRange === '7d' ? 'active' : ''"
+          @click="timeRange = '7d'"
+        >
+          7d
+        </button>
+        <button
+          class="time-filter-btn"
+          :class="timeRange === '30d' ? 'active' : ''"
+          @click="timeRange = '30d'"
+        >
+          30d
+        </button>
+      </div>
+
+      <!-- Content Views -->
+      <div class="dynamic-views-wrapper">
+        <!-- General View -->
+        <div x-show="activeTab === 'general'" x-transition.opacity>
+          
+          <!-- Dynamic Loop for Agent & Network Cards -->
+          <template x-for="card in globalCards" :key="card.id">
+            <div class="card">
+              <h2 x-text="card.title"></h2>
+
+              <div class="cycle-grid">
+                <!-- Col 1: Pie & Badge -->
+                <div class="stat-list-container" style="display: grid; grid-template-rows: auto 1fr auto; padding: 1rem 1.5rem;">
+                  <div class="stat-list-title" style="margin-bottom: 0; border-bottom: none;" x-text="card.pieLabel">
+                  </div>
+
+                  <div style="width: 100%; height: 100%; min-height: 0;">
+                    <div :id="card.pieId" style="width: 100%; height: 100%;"></div>
+                  </div>
+
+                  <div style="display: flex; justify-content: center; margin-top: 0;">
+                    <span
+                      class="badge"
+                      :class="getCardData(card.id).isHealthy ? 'healthy' : 'unhealthy'"
+                      style="font-size: 0.7rem; padding: 0.2rem 0.6rem; gap: 0.4rem;"
+                    >
+                      <div class="status-dot" :class="getCardData(card.id).isHealthy ? 'online' : ''"></div>
+                      <span x-text="getCardData(card.id).badgeLabel"></span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Col 2: Line Chart -->
+                <div style="display: flex; flex-direction: column; padding-top: 1rem;">
+                  <span class="mini-chart-title" x-text="card.chartLabel"></span>
+                  <div :id="card.chartId" class="chart-h-medium"></div>
+                </div>
+
+                <!-- Col 3: Stats List -->
+                <div class="stat-list-container">
+                  <div class="stat-list-title" x-text="card.statsTitle"></div>
+                  <div class="stat-row">
+                    <span class="stat-label">MAX</span>
+                    <span
+                      class="stat-val"
+                      x-text="getCardData(card.id).stats.max + 'ms'"
+                      >--</span
+                    >
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">AVG</span>
+                    <span
+                      class="stat-val"
+                      x-text="getCardData(card.id).stats.avg + 'ms'"
+                      >--</span
+                    >
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">MIN</span>
+                    <span
+                      class="stat-val"
+                      x-text="getCardData(card.id).stats.min + 'ms'"
+                      >--</span
+                    >
+                  </div>
+                  <div class="stat-row">
+                    <span class="stat-label">P95</span>
+                    <span
+                      class="stat-val"
+                      x-text="getCardData(card.id).stats.p95 + 'ms'"
+                      >--</span
+                    >
+                  </div>
+                </div>
+              </div>
+            </div>
+          </template>
+
+          <!-- Services Overview Card -->
+          <div class="card">
+            <h2>Services Latency Overview</h2>
+            <div id="servicesChart" class="chart-h-large"></div>
+          </div>
+        </div>
+
+        <!-- Services View -->
+        <div x-show="activeTab === 'services'" style="display: none">
+          <div style="display: flex; flex-direction: column; gap: 1.5rem">
+            <template x-for="service in metrics.services" :key="service.name">
+              <div class="card" style="margin: 0; padding: 1.5rem">
+                <!-- Service Header -->
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: 4fr 1fr 1fr;
+                    align-items: stretch;
+                    margin-bottom: 1.5rem;
+                  "
+                >
+                  <div
+                    style="display: flex; align-items: baseline; gap: 1.25rem; border-bottom: 1px solid var(--border-color); padding-bottom: 1rem;"
+                  >
+                    <h3
+                      style="margin: 0; font-size: 1.25rem; font-weight: 700"
+                      x-text="service.name"
+                    ></h3>
+                    <span
+                      style="
+                        font-family: monospace;
+                        color: var(--text-secondary);
+                        font-size: 0.85rem;
+                      "
+                      x-text="service.url || 'docker:'+service.name"
+                    ></span>
+                  </div>
+                  <div style="border-bottom: 1px solid var(--border-color); padding-bottom: 1rem;"></div>
+                  
+                  <div style="display: flex; justify-content: center; align-items: center; padding-bottom: 1rem;">
+                    <span
+                      class="badge"
+                      :class="service.status === 'healthy' ? 'healthy' : 'unhealthy'"
+                      style="gap: 0.4rem;"
+                    >
+                      <div class="status-dot" :class="service.status === 'healthy' ? 'online' : ''"></div>
+                      <span x-text="service.status"></span>
+                    </span>
+                  </div>
+                </div>
+
+                <!-- Service Details -->
+                <div
+                  style="
+                    display: grid;
+                    grid-template-columns: 4fr 1fr 1fr;
+                    gap: 1.5rem;
+                    align-items: stretch;
+                  "
+                >
+                  <!-- Latency Chart -->
+                  <div style="height: 180px; width: 100%">
+                    <div
+                      :id="'chart-service-' + service.name"
+                      style="width: 100%; height: 100%"
+                    ></div>
+                  </div>
+
+                  <!-- Latency Stats -->
+                  <div class="stat-list-container">
+                    <div class="stat-row">
+                      <span class="stat-label">MAX</span
+                      ><span class="stat-val" x-text="service.stats ? service.stats.max + 'ms' : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                      <span class="stat-label">AVG</span
+                      ><span class="stat-val" x-text="service.stats ? service.stats.avg + 'ms' : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                      <span class="stat-label">MIN</span
+                      ><span class="stat-val" x-text="service.stats ? service.stats.min + 'ms' : '--'"></span>
+                    </div>
+                    <div class="stat-row">
+                      <span class="stat-label">P95</span
+                      ><span class="stat-val" x-text="service.stats ? service.stats.p95 + 'ms' : '--'"></span>
+                    </div>
+                  </div>
+
+                  <!-- Uptime Pie -->
+                  <div style="height: 180px; width: 100%">
+                    <div
+                      :id="'pie-service-' + service.name"
+                      style="width: 100%; height: 100%"
+                    ></div>
+                  </div>
+                </div>
+              </div>
+            </template>
+          </div>
+        </div>
+      </div>
+    </main>
+
+    <!-- Navigation Dock -->
+    <nav class="dock-container">
+      <button
+        class="dock-item"
+        :class="activeTab === 'general' ? 'active' : ''"
+        @click="activeTab = 'general'"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="3" y="3" width="7" height="7"></rect>
+          <rect x="14" y="3" width="7" height="7"></rect>
+          <rect x="14" y="14" width="7" height="7"></rect>
+          <rect x="3" y="14" width="7" height="7"></rect>
+        </svg>
+        General
+      </button>
+      <button
+        class="dock-item"
+        :class="activeTab === 'services' ? 'active' : ''"
+        @click="activeTab = 'services'"
+      >
+        <svg
+          xmlns="http://www.w3.org/2000/svg"
+          width="18"
+          height="18"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+        </svg>
+        Services
+      </button>
+    </nav>
+
+    <script src="js/mock_data.js"></script>
+    <script src="js/app.js"></script>
+  </body>
+</html>
