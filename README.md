@@ -344,7 +344,7 @@ System behavior is centrally controlled via environment variables (`.env` files)
     ```
 
 4. **Access:**
-    * **Dashboard:** `http://localhost:8098` (or configured IP/domain).
+    * **Dashboard:** `http://localhost:8100` (or configured IP/domain).
     * **Agent Logs:** `docker logs -f heartbeat-agent-prod`
 
 ### Development Environment (Local + Mock)

@@ -350,7 +350,7 @@ El comportamiento del sistema se controla centralizadamente a través de variabl
     ```
 
 4. **Acceso:**
-    * **Dashboard:** `http://localhost:8098` (o la IP/dominio configurado).
+    * **Dashboard:** `http://localhost:8100` (o la IP/dominio configurado).
     * **Logs del Agente:** `docker logs -f heartbeat-agent-prod`
 
 ### Entorno de Desarrollo (Local + Mock)
