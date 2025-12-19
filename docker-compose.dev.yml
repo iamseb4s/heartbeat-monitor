@@ -40,7 +40,7 @@ services:
     env_file:
       - ./.env.dev
     volumes:
-      - ./data:/app/data:ro
+      - ./data:/app/data
       - ./apps/dashboard/backend:/app
       - ./apps/dashboard/frontend:/app/frontend
     depends_on:
