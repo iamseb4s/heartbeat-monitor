@@ -22,7 +22,7 @@ def test_check_one_service_docker_running():
         assert result['error'] is None
 
 def test_check_one_service_docker_stopped():
-    """Verify that a stopped container is reported as unhealthy."""
+    """Verify that a stopped container is reported as down."""
     service_name = "db"
     service_config = {"url": "docker:my-db"}
     services_global = {}
@@ -35,11 +35,11 @@ def test_check_one_service_docker_stopped():
         
         name, result = monitors._check_one_service(service_name, service_config, services_global)
         
-        assert result['status'] == 'unhealthy'
+        assert result['status'] == 'down'
         assert "Container state: exited" in result['error']
 
 def test_check_one_service_docker_not_found():
-    """Verify that a missing container is reported as unhealthy."""
+    """Verify that a missing container is reported as down."""
     service_name = "db"
     service_config = {"url": "docker:ghost-container"}
     services_global = {}
@@ -49,7 +49,7 @@ def test_check_one_service_docker_not_found():
         
         name, result = monitors._check_one_service(service_name, service_config, services_global)
         
-        assert result['status'] == 'unhealthy'
+        assert result['status'] == 'down'
         assert result['error'] == "Container not found"
 
 def test_get_system_metrics():
@@ -68,4 +68,3 @@ def test_get_system_metrics():
         assert metrics['ram_percent'] == 50.0
         assert metrics['ram_used_mb'] == 512.0
         assert metrics['disk_percent'] == 20.0
-

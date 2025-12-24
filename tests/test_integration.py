@@ -85,13 +85,13 @@ def test_integration_service_failure(tmp_path):
     conn.row_factory = sqlite3.Row
     cursor = conn.cursor()
     
-    # Check for unhealthy status in service_checks
+    # Check for specific failure status (HTTP 500 -> 'error')
     cursor.execute("SELECT * FROM service_checks ORDER BY id DESC LIMIT 1")
     row = cursor.fetchone()
     
     assert row is not None
     assert row['service_name'] == 'api'
-    assert row['status'] == 'unhealthy'
+    assert row['status'] == 'error'
     assert "HTTP 500" in row['error_message']
     
     conn.close()
