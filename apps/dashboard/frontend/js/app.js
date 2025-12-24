@@ -7,6 +7,15 @@ const CHART_COLORS = [
   "#eab308", "#6366f1"
 ];
 
+// Semantic colors for service states
+const STATUS_COLORS = {
+  "healthy": "#22c55e", // Green
+  "down": "#ef4444",    // Red
+  "error": "#f97316",   // Orange
+  "timeout": "#eab308", // Yellow
+  "unknown": "#6b7280"  // Gray/Purple
+};
+
 document.addEventListener("alpine:init", () => {
   Alpine.data("dashboardApp", () => {
     // Stores ECharts instances (non-reactive for performance)
@@ -107,6 +116,15 @@ document.addEventListener("alpine:init", () => {
           };
         }
         return { stats: {}, badgeLabel: '??', isHealthy: false };
+      },
+      
+      // Helper to determine status badge color in services table
+      getStatusBadgeColor(status) {
+        if (status === 'healthy') return 'bg-green-500/20 text-green-400 border-green-500/30';
+        if (status === 'down') return 'bg-red-500/20 text-red-400 border-red-500/30';
+        if (status === 'error') return 'bg-orange-500/20 text-orange-400 border-orange-500/30';
+        if (status === 'timeout') return 'bg-yellow-500/20 text-yellow-400 border-yellow-500/30';
+        return 'bg-gray-500/20 text-gray-400 border-gray-500/30'; // unknown
       },
 
       // --- Chart Management ---
@@ -382,15 +400,25 @@ document.addEventListener("alpine:init", () => {
             const pie = chartInstances.servicesPie[svc.name];
             if (pie && !pie.isDisposed()) {
                 const healthPct = svc.stats.uptime; 
-                
+                let pieData = [];
+                if (svc.stats.distribution) {
+                    // Map distribution to semantic colors
+                    pieData = Object.entries(svc.stats.distribution).map(([status, count]) => ({
+                        value: count,
+                        name: status.toUpperCase(),
+                        itemStyle: { color: STATUS_COLORS[status] || STATUS_COLORS.unknown }
+                    }));
+                } else {
+                    // Fallback
+                    pieData = [
+                        { value: svc.stats.success, name: "Healthy", itemStyle: { color: STATUS_COLORS.healthy } },
+                        { value: svc.stats.failure, name: "Unhealthy", itemStyle: { color: STATUS_COLORS.down } }
+                    ];
+                }
+
                 pie.setOption({
                     title: { text: healthPct + "%" },
-                    series: [{ 
-                        data: [
-                            { value: svc.stats.success, name: "Healthy", itemStyle: { color: "#22c55e" } },
-                            { value: svc.stats.failure, name: "Unhealthy", itemStyle: { color: "#ef4444" } }
-                        ]
-                    }]
+                    series: [{ data: pieData }]
                 });
             }
         });
