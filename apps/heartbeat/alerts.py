@@ -3,15 +3,16 @@ import datetime
 import json
 import pytz
 import requests
+import time
 from network import smart_request # Import smart_request from network.py
 
-# --- Constants & Environment Variables (placeholders for now, will come from config) ---
+# --- Constants & Environment Variables ---
 SECRET_KEY = os.getenv('SECRET_KEY')
 HEARTBEAT_URL = os.getenv('HEARTBEAT_URL')
 N8N_WEBHOOK_URL = os.getenv('N8N_WEBHOOK_URL')
 LIMA_TZ = pytz.timezone('America/Lima')
-STATUS_CHANGE_THRESHOLD = 4 
-LOOP_INTERVAL_SECONDS = 10 # Needed for log duration calculation
+STATUS_CHANGE_THRESHOLD = int(os.getenv('STATUS_CHANGE_THRESHOLD', 4))
+LOOP_INTERVAL_SECONDS = int(os.getenv('LOOP_INTERVAL_SECONDS', 10))
 
 # --- Unified State Management ---
 global_states = {}
@@ -26,7 +27,6 @@ def send_heartbeat(services_payload):
     
     headers = {"Authorization": f"Bearer {SECRET_KEY}", "Content-Type": "application/json"}
     try:
-        # services_to_check is not relevant for the heartbeat URL itself, pass empty dict
         response = smart_request('POST', HEARTBEAT_URL, {}, headers=headers, json=services_payload, timeout=6)
         return response.status_code
     except requests.exceptions.RequestException as e:
@@ -85,15 +85,23 @@ def send_notification(item_name, new_status, old_status, extra_info=None, intern
             latency_msg = f" ({extra_info}ms)" if extra_info is not None else ""
             title = f"✅ Servicio Recuperado: {item_name}"
             message = f"El servicio **{item_name}** vuelve a estar operativo{latency_msg}.\n\n**Transición**: `{old_status}` -> `{new_status}`\n**Hora**: {timestamp}"
-        else:  # Unhealthy or other
-            error_msg = f"\n**Error**: `{extra_info}`" if extra_info else ""
-            title = f"❌ Servicio Caído: {item_name}"
-            message = f"El servicio **{item_name}** ha dejado de responder.{error_msg}\n\n**Transición**: `{old_status}` -> `{new_status}`\n**Hora**: {timestamp}"
+        else:  # Unhealthy states (down, error, timeout, unknown)
+            error_msg = f"\n**Detalle**: `{extra_info}`" if extra_info else ""
+            
+            if new_status == 'down':
+                title = f"🔴 Servicio Caído: {item_name}"
+            elif new_status == 'timeout':
+                title = f"⏱️ Timeout en Servicio: {item_name}"
+            elif new_status == 'error':
+                title = f"🔥 Error en Servicio: {item_name}"
+            else:
+                title = f"❓ Problema en Servicio: {item_name}"
+                
+            message = f"El servicio **{item_name}** presenta problemas.{error_msg}\n\n**Estado**: `{new_status}`\n**Hora**: {timestamp}"
 
     # Retry logic
     for attempt in range(3):
         try:
-            # services_to_check is not relevant for the webhook URL itself, pass empty dict
             smart_request('POST', N8N_WEBHOOK_URL, {}, json={"title": title, "message": message}, timeout=5)
             print(f"STATE CHANGE ALERT sent for '{item_name}': {old_status or 'N/A'} -> {new_status or 'N/A'}")
             break

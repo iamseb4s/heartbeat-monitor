@@ -3,17 +3,17 @@ import time
 import json
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-# Importaciones de módulos
+# Module imports
 import database
 import monitors
 import alerts
 import config
 
-# Inicializar psutil para lecturas correctas
+# Initialize psutil for accurate first readings
 import psutil
 psutil.cpu_percent(interval=None)
 
-# Variables globales (se moverán a config después si se requiere)
+# Global variables
 global_states = alerts.global_states
 
 def main(run_once=False):
@@ -62,10 +62,11 @@ def main(run_once=False):
             # --- Send Heartbeat to Worker ---
             worker_status = None
             if internet_ok:
-                # Create a clean payload for the worker, containing only the status
+                # Create a clean payload for the worker
+                # CRITICAL: Map extended statuses (down, error, timeout) to 'unhealthy' for external compatibility
                 services_payload_clean = {
                     "services": {
-                        name: {"status": data["status"]} 
+                        name: {"status": data["status"] if data["status"] == 'healthy' else 'unhealthy'} 
                         for name, data in services_health_full.get("services", {}).items()
                     }
                 }
@@ -80,7 +81,7 @@ def main(run_once=False):
             # Process Individual Service Statuses
             for name, health_data in services_health_full.get("services", {}).items():
                 service_status = health_data['status']
-                # Extract extra info based on status: latency for healthy, error for unhealthy
+                # Extract extra info based on status: latency for healthy, error for unhealthy/down/etc
                 extra_info = health_data.get('latency_ms') if service_status == 'healthy' else health_data.get('error')
                 
                 action, old_status, info_to_send = alerts.check_state_change(name, service_status, ['healthy'], extra_info)
@@ -90,7 +91,7 @@ def main(run_once=False):
             # --- Save & Log ---
             cycle_duration_ms = int((time.monotonic() - cycle_start_time) * 1000)
             
-            # Pass dictionary directly for new DB schema
+            # Save RAW detailed status to internal DB (e.g., 'down', 'timeout')
             all_metrics = {
                 "timestamp_lima": timestamp_lima, **sys_metrics, "container_count": container_count,
                 "internet_ok": internet_ok, "ping_ms": ping_ms, "worker_status": worker_status, 
@@ -100,15 +101,15 @@ def main(run_once=False):
             database.save_metrics_to_db(all_metrics)
 
             # --- Log Cycle Summary ---
-            # Visual formatting for console logs: name 🔵 - 5ms or name 🔴 - error: msg
             log_items = []
             for name, data in services_health_full.get("services", {}).items():
-                if data['status'] == 'healthy':
+                status = data['status']
+                if status == 'healthy':
                     latency = data.get('latency_ms', 0)
-                    log_items.append(f"{name} 🔵 - {latency}ms")
+                    log_items.append(f"{name} 🔵 ({latency}ms)")
                 else:
-                    error = data.get('error', 'Unknown error')
-                    log_items.append(f"{name} 🔴 - error: {error}")
+                    error = data.get('error', 'Unknown')
+                    log_items.append(f"{name} 🔴 [{status.upper()}] {error}")
             
             services_log_str = "   |   ".join(log_items)
             worker_log = alerts.global_states.get('worker', {})

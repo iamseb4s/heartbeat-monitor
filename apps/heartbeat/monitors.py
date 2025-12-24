@@ -8,7 +8,7 @@ from network import smart_request # Import smart_request from network.py
 
 # --- Constants & Environment Variables (placeholders for now, will come from config) ---
 PING_URL = "http://www.google.com"
-SERVICE_TIMEOUT_SECONDS = 2 
+SERVICE_TIMEOUT_SECONDS = int(os.getenv('SERVICE_TIMEOUT_SECONDS', 2))
 
 # Docker client setup
 try:
@@ -57,16 +57,14 @@ def check_internet_and_ping():
 
 def _check_one_service(name, service_config, services_to_check_global):
     """
-    Helper function to check a single service, capturing latency.
-    Handles both HTTP/HTTPS and 'docker:' protocol checks.
+    Helper function to check a single service with rich status classification.
     """
     url = service_config['url']
-    headers = service_config.get('headers', {}) # Get custom headers for the service
+    headers = service_config.get('headers', {})
     
-    # Default structure for the result
     result = {
         "url": url,
-        "status": "unhealthy",
+        "status": "unknown",     # Default to unknown if unhandled logic occurs
         "status_code": None,
         "latency_ms": None,
         "error": None
@@ -74,7 +72,7 @@ def _check_one_service(name, service_config, services_to_check_global):
     
     if url.startswith("docker:"):
         if not docker_client:
-            result["error"] = "Docker client unavailable"
+            result.update({"status": "unknown", "error": "Docker client unavailable"})
             return name, result
         
         container_name = url.split(":", 1)[1].strip()
@@ -88,16 +86,14 @@ def _check_one_service(name, service_config, services_to_check_global):
                     "latency_ms": latency_ms,
                     "error": None
                 })
-                return name, result
             else:
-                result["error"] = f"Container state: {container.status}"
-                return name, result
+                # Container exists but is not running (exited, paused, dead)
+                result.update({"status": "down", "error": f"Container state: {container.status}"})
         except docker.errors.NotFound:
-            result["error"] = "Container not found"
-            return name, result
+            result.update({"status": "down", "error": "Container not found"})
         except Exception as e:
-            result["error"] = str(e)
-            return name, result
+            result.update({"status": "unknown", "error": str(e)})
+        return name, result
     else:
         try:
             # Pass custom headers to smart_request
@@ -114,23 +110,23 @@ def _check_one_service(name, service_config, services_to_check_global):
                     "latency_ms": latency_ms,
                     "error": None
                 })
-                return name, result
             else:
+                # HTTP 4xx/5xx errors -> Classified as 'error' (Service is up but failing)
                 status_desc = response.status_code if response is not None else "No Response"
-                result["error"] = f"HTTP {status_desc}"
-                return name, result
+                result.update({"status": "error", "error": f"HTTP {status_desc}"})
+                
         except requests.exceptions.Timeout:
-             result["error"] = "Timeout"
-             return name, result
+             result.update({"status": "timeout", "error": "Timeout"})
         except requests.exceptions.ConnectionError:
-             result["error"] = "Connection Error"
-             return name, result
+             result.update({"status": "down", "error": "Connection Error"})
         except requests.exceptions.RequestException as e:
-            result["error"] = str(e)
-            return name, result
+            # Generic Request Exception (DNS, etc)
+            result.update({"status": "down", "error": str(e)})
         except Exception as e:
-            result["error"] = str(e)
-            return name, result
+            # Unhandled exceptions
+            result.update({"status": "unknown", "error": str(e)})
+            
+        return name, result
 
 def check_services_health(executor, services_to_check_config):
     """Checks the health of configured services in parallel."""
