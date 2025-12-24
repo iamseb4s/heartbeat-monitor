@@ -215,7 +215,7 @@ async def fetch_analytics_optimized(db: AsyncSession, range_str: str):
             sys_ram.append(round(row.ram, 2))
             sys_disk.append(round(row.disk, 2))
             cycle_dur.append(int(row.cycle))
-            pings.append(int(row.ping) if row.ping else 0)
+            pings.append(int(row.ping) if row.ping is not None else None)
         else:
             sys_cpu.append(None)
             sys_ram.append(None)
@@ -256,7 +256,8 @@ async def fetch_analytics_optimized(db: AsyncSession, range_str: str):
         service_names.add(r.service_name)
         if r.service_name not in svc_data_map:
             svc_data_map[r.service_name] = {}
-        svc_data_map[r.service_name][r.bucket_ts] = int(r.lat)
+        # FIX: Handle NULL latency safely
+        svc_data_map[r.service_name][r.bucket_ts] = int(r.lat) if r.lat is not None else None
 
     # Backfill service data
     svc_series_map = {}
@@ -272,12 +273,31 @@ async def fetch_analytics_optimized(db: AsyncSession, range_str: str):
     history_data["services"] = svc_series_map
 
     # 7. Service Stats (Precise Uptime & Counts)
-    query_svc_stats = text("""
+    # Refactored to capture ALL status types for accurate distribution
+    query_svc_dist = text("""
         SELECT 
             service_name,
-            avg(CASE WHEN status = 'healthy' THEN 1.0 ELSE 0.0 END) * 100 as uptime,
-            sum(CASE WHEN status = 'healthy' THEN 1 ELSE 0 END) as healthy_cnt,
-            sum(CASE WHEN status != 'healthy' THEN 1 ELSE 0 END) as unhealthy_cnt,
+            status,
+            count(*) as cnt
+        FROM service_checks s
+        JOIN monitoring_cycles m ON s.cycle_id = m.id
+        WHERE m.timestamp_lima >= :start
+        GROUP BY service_name, status
+    """)
+    result_svc_dist = await db.execute(query_svc_dist, {"start": start_time_iso})
+    rows_dist = result_svc_dist.fetchall()
+    
+    # Process distribution per service
+    svc_dist_map = {}
+    for r in rows_dist:
+        if r.service_name not in svc_dist_map:
+            svc_dist_map[r.service_name] = {}
+        svc_dist_map[r.service_name][r.status] = r.cnt
+
+    # Get Latency stats separately
+    query_svc_lat = text("""
+        SELECT 
+            service_name,
             max(latency_ms) as max_lat,
             avg(latency_ms) as avg_lat,
             min(latency_ms) as min_lat
@@ -286,20 +306,34 @@ async def fetch_analytics_optimized(db: AsyncSession, range_str: str):
         WHERE m.timestamp_lima >= :start
         GROUP BY service_name
     """)
-    result_svc_stats = await db.execute(query_svc_stats, {"start": start_time_iso})
-    
-    rows_stats = result_svc_stats.fetchall()
+    result_svc_lat = await db.execute(query_svc_lat, {"start": start_time_iso})
+    rows_lat = result_svc_lat.fetchall()
+    lat_map = {r.service_name: r for r in rows_lat}
 
     svc_stats_dict = {}
-    for r in rows_stats:
-        s_max = int(r.max_lat or 0)
-        s_min = int(r.min_lat or 0)
-        svc_stats_dict[r.service_name] = {
-            "uptime": smart_round(r.uptime or 0),
-            "success": int(r.healthy_cnt or 0),
-            "failure": int(r.unhealthy_cnt or 0),
+    for s_name in svc_dist_map:
+        dist = svc_dist_map[s_name]
+        total = sum(dist.values())
+        healthy_cnt = dist.get('healthy', 0)
+        
+        # Calculate uptime based strictly on 'healthy' status
+        uptime = (healthy_cnt / total * 100) if total > 0 else 0
+        
+        # Unhealthy count is everything that is NOT healthy
+        unhealthy_cnt = total - healthy_cnt
+        
+        lat_stats = lat_map.get(s_name)
+        s_max = int(lat_stats.max_lat or 0) if lat_stats else 0
+        s_min = int(lat_stats.min_lat or 0) if lat_stats else 0
+        s_avg = int(lat_stats.avg_lat or 0) if lat_stats else 0
+
+        svc_stats_dict[s_name] = {
+            "uptime": smart_round(uptime),
+            "success": healthy_cnt,
+            "failure": unhealthy_cnt,
+            "distribution": dist, # New field for detailed breakdown
             "max": s_max,
-            "avg": int(r.avg_lat or 0),
+            "avg": s_avg,
             "min": s_min,
             "jitter": s_max - s_min
         }
@@ -369,6 +403,7 @@ async def get_live_metrics(range: str = "1h", db: AsyncSession = Depends(get_db)
                 "url": s.service_url,
                 "status": s.status,
                 "latency": s.latency_ms,
+                "error": s.error_message, # Expose error message for frontend
                 "stats": stats["services"].get(s.service_name, {"max":0, "avg":0, "min":0, "jitter":0, "uptime": 0, "success": 0, "failure": 0})
             } for s in cycle.service_checks
         ],

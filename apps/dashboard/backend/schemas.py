@@ -11,6 +11,7 @@ class ServiceStats(BaseModel):
     uptime: float
     success: int
     failure: int
+    distribution: Optional[Dict[str, int]] = None # Detailed breakdown of status counts
     max: float
     avg: float
     min: float
@@ -21,6 +22,7 @@ class ServiceCheckSchema(BaseModel):
     url: Optional[str]
     status: str
     latency: Optional[float]
+    error: Optional[str] = None # Detailed error message (e.g., "Timeout", "HTTP 500")
     stats: ServiceStats
 
 class DistributionItem(BaseModel):
