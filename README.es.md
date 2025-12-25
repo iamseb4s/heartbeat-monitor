@@ -7,7 +7,7 @@
   <img src="https://img.shields.io/badge/Docker-passing-brightgreen.svg" alt="Docker Build Status">
 </p>
 
-Un agente de monitorización ligero, modular y concurrente diseñado específicamente para entornos Dockerizados. Este sistema no solo verifica la disponibilidad, sino que optimiza la latencia de red y gestiona el estado de los servicios con una arquitectura resiliente.
+Un sistema de observabilidad ligero, modular y concurrente diseñado específicamente para entornos Dockerizados. Este sistema no solo verifica la disponibilidad, sino que optimiza la latencia de red, gestiona el estado de los servicios con una arquitectura resiliente y ofrece visualización en tiempo real.
 
 Desarrollado en **Python 3.14 (Alpine)**, enfocado en la eficiencia de recursos y la precisión de métricas.
 
@@ -15,7 +15,13 @@ Desarrollado en **Python 3.14 (Alpine)**, enfocado en la eficiencia de recursos 
 
 El sistema incluye un panel de control moderno para visualizar la salud de tu infraestructura.
 
-* **Frontend:** Construido con **AlpineJS** y **ECharts**. Ligero, sin build-step complejo, con actualizaciones en tiempo real ("Live Mode") y visualización de **Jitter**.
+* **Frontend:** Construido con **AlpineJS** y **Chart.js**. Ligero, sin build-step complejo, con actualizaciones en tiempo real ("Live Mode") y visualización de **Jitter**.
+* **Visualización Semántica:** La salud de los servicios se representa mediante una paleta de colores enriquecida:
+  * 🟢 **Healthy (Saludable):** El servicio responde correctamente (2xx/3xx).
+  * 🔴 **Down (Caído):** Conexión rechazada o contenedor detenido.
+  * 🟠 **Error:** El servidor retornó un error (HTTP 5xx).
+  * 🟡 **Timeout:** La petición excedió el tiempo de espera configurado.
+  * ⚪ **Unknown (Desconocido):** Error interno de monitorización o fallo inesperado.
 * **Backend:** API RESTful de alto rendimiento con **FastAPI**. Implementa **Resolución Dinámica** (`TARGET_DATA_POINTS = 30`) para garantizar gráficos fluidos sin importar el rango de tiempo consultado (desde 5 minutos hasta 30 días).
 
 ## 🏗️ Arquitectura del Sistema
@@ -39,7 +45,7 @@ El sistema utiliza un patrón de **Productor-Consumidor desacoplado** a través 
                                                v
                                    +------------------------+
                                    |   DASHBOARD FRONTEND   |
-                                   |   (AlpineJS / ECharts) |
+                                   |   (AlpineJS / Chart.js)|
                                    +------------------------+
 ```
 
@@ -97,7 +103,7 @@ El agente opera en un bucle principal, ejecutándose cada 10 segundos, coordinan
 1. **Inicialización:** Carga de configuración y establecimiento de conexiones persistentes (Keep-Alive).
 2. **Métricas de Sistema (Síncrono):** Lectura instantánea de CPU/RAM/Disco (`psutil`).
 3. **Health Checks (Paralelo)::** Se lanzan hilos concurrentes para verificar todos los servicios configurados y la conectividad a Internet.
-4. **Procesamiento de Estado:** Se evalúan los cambios (Healthy <-> Unhealthy) contra los umbrales definidos.
+4. **Procesamiento de Estado:** Se evalúan los cambios (Healthy <-> Error/Down/Timeout) contra los umbrales definidos.
 5. **Notificación/Heartbeat:** Si hay cambios críticos o corresponde un latido, se envían payloads JSON optimizados a los endpoints externos.
 6. **Persistencia:** Se realiza un commit atómico de todas las métricas del ciclo en la base de datos local.
 
@@ -117,7 +123,7 @@ El proyecto ha evolucionado hacia una arquitectura de **Monorepo** para gestiona
 │   │   └── database.py    # Persistencia SQLite.
 │   ├── dashboard/     # Panel de Visualización (Nuevo)
 │   │   ├── backend/       # API FastAPI para analítica.
-│   │   └── frontend/      # UI Reactiva (AlpineJS + ECharts).
+│   │   └── frontend/      # UI Reactiva (AlpineJS + Chart.js).
 │   └── mocks/         # Mock Server para desarrollo local
 │       ├── server.py      # Servidor Python de pruebas.
 │       └── templates/     # UI del Mock Controller.
@@ -152,7 +158,15 @@ Los servicios a monitorear se configuran dinámicamente mediante variables de en
 1. **`SERVICE_NAMES`**: Lista separada por comas de los nombres de los servicios (ej: `SERVICE_NAMES=nextjs,strapi,umami`).
 2. **`SERVICE_URL_{nombre}`**: La URL a chequear para cada nombre definido (ej: `SERVICE_URL_nextjs=https://www.ejemplo.com`).
 
-Un servicio se considera `"healthy"` si responde con un código `2xx` o `3xx`. De lo contrario, se marca como `"unhealthy"`.
+### Estados de Servicio (Taxonomía Enriquecida)
+
+El sistema utiliza un modelo de estados granular para proporcionar diagnósticos precisos:
+
+* `healthy`: El servicio respondió con 2xx/3xx.
+* `down`: Conexión rechazada o contenedor detenido.
+* `error`: Error de servidor HTTP 5xx.
+* `timeout`: Sin respuesta dentro de `SERVICE_TIMEOUT_SECONDS`.
+* `unknown`: La lógica de monitoreo falló al ejecutarse.
 
 ### Configuración Avanzada de Servicios
 
@@ -163,12 +177,7 @@ El monitor soporta características avanzadas para cubrir casos de uso complejos
 Para servicios de infraestructura (como Nginx, túneles, bases de datos) que no exponen un puerto HTTP accesible fácilmente, puedes usar el protocolo `docker:`. Esto verifica directamente si el contenedor está en estado `running`.
 
 * **Sintaxis:** `SERVICE_URL_<nombre>="docker:<nombre_del_contenedor>"`
-* **Ejemplo:**
-
-    ```bash
-    SERVICE_URL_nginx="docker:mi-contenedor-nginx"
-    ```
-
+* **Ejemplo:** `SERVICE_URL_nginx="docker:mi-contenedor-nginx"`
 * **Nota:** Requiere que el agente tenga acceso al socket de Docker (`/var/run/docker.sock`).
 
 #### 2. Headers HTTP Personalizados
@@ -179,7 +188,6 @@ Algunos endpoints de salud requieren autenticación o headers específicos para 
 * **Ejemplo:**
 
     ```bash
-    # Verifica un endpoint que requiere un token o flag especial
     SERVICE_URL_api="https://mi-api.com/health"
     SERVICE_HEADERS_api="x-health-check:true,Authorization:Bearer mi-token"
     ```
@@ -194,7 +202,7 @@ Para entornos donde los servicios residen en la misma red local o servidor (ej: 
 
 ### Payload de Estado de Salud
 
-En cada ciclo, el agente construye un payload JSON que resume el estado de salud de los servicios y lo envía al `HEARTBEAT_URL`.
+En cada ciclo, el agente construye un payload JSON que resume el estado de salud de los servicios y lo envía al `HEARTBEAT_URL`. El payload ahora incluye los estados enriquecidos para procesamiento avanzado en el worker.
 
 * **Estructura del Payload:**
 
@@ -202,8 +210,8 @@ En cada ciclo, el agente construye un payload JSON que resume el estado de salud
     {
       "services": {
         "nextjs": { "status": "healthy" },
-        "strapi": { "status": "unhealthy" },
-        "umami": { "status": "healthy" }
+        "strapi": { "status": "down" },
+        "umami": { "status": "timeout" }
       }
     }
     ```
@@ -227,7 +235,7 @@ El sistema envía alertas al `N8N_WEBHOOK_URL` bajo las siguientes condiciones, 
     * **Timestamp:** Todas las alertas incluyen la fecha y hora exacta del evento (zona horaria configurada) para una auditoría precisa.
 
 3. **Condiciones de Disparo:**
-    * **Caída de Servicio:** Tras `STATUS_CHANGE_THRESHOLD` fallos consecutivos.
+    * **Caída de Servicio:** Tras `STATUS_CHANGE_THRESHOLD` fallos consecutivos (down/error/timeout).
     * **Recuperación de Servicio:** Inmediata al primer éxito.
     * **Estado del Worker:** Monitorización de cambios de estado del propio worker de Cloudflare con alertas contextuales.
 
@@ -252,7 +260,7 @@ Almacena una fila por cada ciclo de ejecución (10s).
 | `container_count`| `INTEGER`| Total de contenedores Docker corriendo. |
 | `internet_status` | `BOOLEAN`| `1` (Online) / `0` (Offline). |
 | `ping_ms` | `REAL` | Latencia a Internet (ICMP/HTTP Ping). |
-| `worker_status` | `INTEGER` | Código de estado HTTP retornado por la API del Cloudflare Worker. Refleja el resultado del procesamiento del latido. <br> - `200`: **Éxito**. Latido recibido, procesado y el estado del host/servicios fue actualizado. Puede indicar un estado "recorded" (sin cambios) o "recovered" (recuperación). <br> - `220`: **Advertencia (Ciego)**. Latido recibido y timestamp actualizado, pero la API no pudo leer el estado *anterior* de su base de datos. No se pudo determinar si hubo una recuperación. <br> - `221`: **Advertencia (Fallo en Actualización de Recuperación)**. Se detectó una recuperación, pero la API falló al actualizar su propio estado o al enviar la notificación. <br> - `500`: **Error Crítico del Worker**. La API falló en un paso esencial (ej. escribir el timestamp inicial) y el latido fue abortado. <br> - `NULL`: **Error del Agente Local**. El script de monitorización no pudo contactar la API del worker (ej. timeout, error de red, DNS). |
+| `worker_status` | `INTEGER` | Código de estado HTTP retornado por la API del Cloudflare Worker. <br> - `200`: **Éxito**. Latido recibido y procesado. <br> - `220`: **Advertencia (Ciego)**. Recibido pero estado anterior desconocido. <br> - `221`: **Advertencia (Fallo en Recuperación)**. Recuperación detectada pero fallo al notificar. <br> - `500`: **Error Crítico del Worker**. Fallo interno en el worker. <br> - `NULL`: **Error del Agente Local**. El script no pudo contactar la API (timeout, red, DNS). |
 | `cycle_duration_ms` | `INTEGER` | Tiempo total de ejecución del ciclo. |
 
 ### Tabla 2: `service_checks` (Detalle por Servicio)
@@ -265,8 +273,8 @@ Almacena el estado individual de cada servicio monitoreado en un ciclo. Relació
 | `cycle_id` | `TEXT (FK)` | Referencia a `monitoring_cycles.id`. |
 | `service_name` | `TEXT` | Nombre del servicio (Indexado). |
 | `service_url` | `TEXT` | Endpoint verificado. |
-| `status` | `TEXT` | `'healthy'` o `'unhealthy'`. |
-| `latency_ms` | `REAL` | Tiempo de respuesta del servicio. |
+| `status` | `TEXT` | Estado semántico: `healthy`, `down`, `error`, `timeout`, `unknown`. |
+| `latency_ms` | `REAL` | Tiempo de respuesta del servicio (NULL si está caído). |
 | `status_code` | `INTEGER` | Código HTTP de respuesta (ej. 200, 500). |
 | `error_message` | `TEXT` | Detalle del error (Timeout, Connection Refused). |
 
@@ -290,9 +298,9 @@ Retorna el estado actual del sistema y las series de tiempo históricas.
 * **Métricas Incluidas:**
   * **Jitter:** Calculado como `MAX(latency) - MIN(latency)` por bucket.
   * **Uptime %:** Calculado sobre el total de ciclos en el rango.
-  * **Distribución de Errores:** Conteo agrupado por códigos de estado.
+  * **Distribución de Estado:** Conteo agrupado por estados semánticos (healthy, down, error, etc).
 
-## ⚙️ Configuración y Variables de Entorno
+## ⚙️ Configuración y Variables de Env
 
 El comportamiento del sistema se controla centralizadamente a través de variables de entorno (archivos `.env`).
 
@@ -307,17 +315,17 @@ El comportamiento del sistema se controla centralizadamente a través de variabl
 
 ### Monitorización de Servicios
 
-| Variable | Descripción | Ejemplo |
-| :--- | :--- | :--- |
-| `SERVICE_NAMES` | Lista separada por comas de identificadores de servicios. | `api,webapp,db_primary` |
-| `SERVICE_URL_{NAME}` | URL de destino para el health check. Soporta `http(s)://` y `docker:`. | `docker:postgres-container` |
-| `SERVICE_HEADERS_{NAME}`| Headers HTTP opcionales (Auth, User-Agent, etc.). | `Authorization:Bearer xyz` |
+| Variable                | Descripción                                                            | Ejemplo                     |
+| :---------------------- | :--------------------------------------------------------------------- | :-------------------------- |
+| `SERVICE_NAMES`         | Lista separada por comas de identificadores de servicios.              | `api,webapp,db_primary`     |
+| `SERVICE_URL_{NAME}`    | URL de destino para el health check. Soporta `http(s)://` y `docker:`. | `docker:postgres-container` |
+| `SERVICE_HEADERS_{NAME}`| Headers HTTP opcionales (Auth, User-Agent, etc.).                      | `Authorization:Bearer xyz`  |
 
 ### Red Avanzada
 
 | Variable | Descripción | Ejemplo |
 | :--- | :--- | :--- |
-| `INTERNAL_DNS_OVERRIDE_IP` | IP para forzar resolución DNS local. Útil para saltar NAT/Loopback. | `172.17.0.1` (Gateway Docker) |
+| `INTERNAL_DNS_OVERRIDE_IP` | IP para forzar resolución DNS local. Útil para saltar NAT/Loopback. | `172.17.0.1` |
 
 ### Configuración Operacional (Avanzado)
 
@@ -355,17 +363,15 @@ El comportamiento del sistema se controla centralizadamente a través de variabl
 
 ### Entorno de Desarrollo (Local + Mock)
 
-Para desarrollar sin afectar la base de datos de producción ni saturar el Worker real, utiliza el entorno aislado que incluye un **Mock Server**:
-
 1. **Configurar Variables:** Copia `.env.dev.example` a `.env.dev`.
-2. **Ejecutar:** `docker compose -f docker-compose.dev.yml up --build`
+2. **Run:** `docker compose -f docker-compose.dev.yml up --build`
 3. **Herramientas Disponibles:**
     * **Dashboard:** **<http://localhost:8098>** - Visualización de métricas en tiempo real.
     * **Mock Controller:** **<http://localhost:8099>** - Simular caídas, ver logs y forzar respuestas.
 
 ## 🧪 Pruebas (Testing)
 
-El proyecto incluye una suite completa de pruebas unitarias y de integración para garantizar la fiabilidad de la lógica de alertas, red y monitoreo.
+El proyecto incluye una suite completa de pruebas unitarias y de integración.
 
 * **Ejecución Manual:** Ejecuta los tests dentro del contenedor de desarrollo:
 

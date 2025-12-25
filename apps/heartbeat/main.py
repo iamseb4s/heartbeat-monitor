@@ -62,11 +62,10 @@ def main(run_once=False):
             # --- Send Heartbeat to Worker ---
             worker_status = None
             if internet_ok:
-                # Create a clean payload for the worker
-                # CRITICAL: Map extended statuses (down, error, timeout) to 'unhealthy' for external compatibility
+                # Create a clean payload for the worker with raw statuses
                 services_payload_clean = {
                     "services": {
-                        name: {"status": data["status"] if data["status"] == 'healthy' else 'unhealthy'} 
+                        name: {"status": data["status"]} 
                         for name, data in services_health_full.get("services", {}).items()
                     }
                 }
