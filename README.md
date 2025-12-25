@@ -153,10 +153,12 @@ The agent's primary functionality is to monitor the status of multiple web servi
 
 ### Dynamic Configuration
 
-The services to be monitored are configured dynamically via environment variables:
+The services to be monitored are configured dynamically via environment variables. The agent auto-discovers any variable starting with `SERVICE_URL_`.
 
-1. **`SERVICE_NAMES`**: Comma-separated list of service names (e.g., `SERVICE_NAMES=nextjs,strapi,umami`).
-2. **`SERVICE_URL_{name}`**: The URL to check for each defined name (e.g., `SERVICE_URL_nextjs=https://www.example.com`).
+1. **`SERVICE_URL_{name}`**: The URL to check. The `{name}` suffix acts as the service identifier.
+   * Example: `SERVICE_URL_nextjs=https://www.example.com` -> Monitors service "nextjs".
+
+A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Other responses result in specific states like `"error"` (for 5xx codes).
 
 ### Service States (Rich Taxonomy)
 
