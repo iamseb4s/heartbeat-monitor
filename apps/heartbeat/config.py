@@ -25,37 +25,38 @@ SQLITE_DB_PATH = os.getenv('SQLITE_DB_PATH', 'data/metrics.db')
 
 def parse_services_from_env():
     """
-    Parses service configuration from environment variables,
-    including URLs and optional custom headers.
+    Auto-discovers service configuration from environment variables.
+    Scans for variables starting with 'SERVICE_URL_' and extracts the service name.
+    
     Returns a dict like: {'name': {'url': '...', 'headers': {}}}.
     """
     services_config = {}
-    service_names_str = os.getenv('SERVICE_NAMES', '')
-    if not service_names_str:
-        print("Warning: SERVICE_NAMES environment variable not set. No services will be monitored.")
-        return services_config
-        
-    service_names = [name.strip() for name in service_names_str.split(',')]
     
-    for name in service_names:
-        url = os.getenv(f'SERVICE_URL_{name}')
-        if not url:
-            print(f"Warning: Missing URL for service '{name}'. Environment variable SERVICE_URL_{name} not found.")
-            continue
-        
-        custom_headers = {}
-        headers_str = os.getenv(f'SERVICE_HEADERS_{name}')
-        if headers_str:
-            try:
-                # Expecting format "Key1:Value1,Key2:Value2"
-                for header_pair in headers_str.split(','):
-                    key, value = header_pair.split(':', 1)
-                    custom_headers[key.strip()] = value.strip()
-            except ValueError:
-                print(f"Warning: Invalid format for SERVICE_HEADERS_{name}. Expected 'Key:Value,Key:Value'. Skipping custom headers for {name}.")
-
-        services_config[name] = {'url': url, 'headers': custom_headers}
+    # Iterate over all environment variables
+    for key, url in os.environ.items():
+        if key.startswith('SERVICE_URL_'):
+            # Extract service name (e.g. SERVICE_URL_api -> api)
+            name = key[len('SERVICE_URL_'):]
             
+            if not name:
+                continue # Skip if empty name
+                
+            custom_headers = {}
+            headers_str = os.getenv(f'SERVICE_HEADERS_{name}')
+            if headers_str:
+                try:
+                    # Expecting format "Key1:Value1,Key2:Value2"
+                    for header_pair in headers_str.split(','):
+                        k, v = header_pair.split(':', 1)
+                        custom_headers[k.strip()] = v.strip()
+                except ValueError:
+                    print(f"Warning: Invalid format for SERVICE_HEADERS_{name}. Expected 'Key:Value,Key:Value'. Skipping custom headers for {name}.")
+
+            services_config[name] = {'url': url, 'headers': custom_headers}
+            
+    if not services_config:
+        print("Warning: No services found. Set SERVICE_URL_{name} environment variables to monitor services.")
+
     return services_config
 
 SERVICES_TO_CHECK = parse_services_from_env()

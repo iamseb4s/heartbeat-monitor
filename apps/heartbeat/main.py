@@ -24,10 +24,12 @@ def main(run_once=False):
         print("WARNING: N8N_WEBHOOK_URL is not set. Alerts will NOT be sent.")
 
     if not config.SERVICES_TO_CHECK:
-        print("CRITICAL: No services configured. Please set SERVICE_NAMES and SERVICE_URL_* environment variables.")
+        print("CRITICAL: No services configured. Please set SERVICE_URL_* environment variables.")
         return
     
-    print(f"Starting monitoring loop. Monitoring services: {list(config.SERVICES_TO_CHECK.keys())}")
+    # Sort services for display log (consistency)
+    sorted_service_names = sorted(config.SERVICES_TO_CHECK.keys())
+    print(f"Starting monitoring loop. Monitoring services: {sorted_service_names}")
     print(f"Config: Interval={config.LOOP_INTERVAL_SECONDS}s, Threshold={config.STATUS_CHANGE_THRESHOLD} cycles per state change.")
     
     while True:
@@ -51,9 +53,27 @@ def main(run_once=False):
                 future_internet = executor.submit(monitors.check_internet_and_ping)
                 future_containers = executor.submit(monitors.get_container_count)
 
-                services_health_full = {"services": {}}
+                # Collect all results first
+                raw_results = []
                 for future in as_completed(future_services):
                     name, status = future.result()
+                    raw_results.append((name, status))
+
+                # Deterministic Sorting:
+                # 1. Protocol Type (HTTP first [0], Docker second [1])
+                # 2. Service Name (Alphabetical)
+                def sort_key(item):
+                    name, _ = item
+                    url = config.SERVICES_TO_CHECK[name]['url']
+                    is_docker = 1 if url.startswith('docker:') else 0
+                    return (is_docker, name)
+
+                raw_results.sort(key=sort_key)
+
+                # Construct Ordered Dictionary
+                # Python 3.7+ preserves insertion order, so this dict will be ordered in JSON dump
+                services_health_full = {"services": {}}
+                for name, status in raw_results:
                     services_health_full["services"][name] = status
 
                 internet_ok, ping_ms = future_internet.result()
@@ -63,6 +83,7 @@ def main(run_once=False):
             worker_status = None
             if internet_ok:
                 # Create a clean payload for the worker with raw statuses
+                # The dictionary order is preserved from services_health_full
                 services_payload_clean = {
                     "services": {
                         name: {"status": data["status"]} 
