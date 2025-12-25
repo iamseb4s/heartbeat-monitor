@@ -15,7 +15,13 @@ Developed in **Python 3.14 (Alpine)**, focused on resource efficiency and metric
 
 The system includes a modern control panel to visualize your infrastructure health.
 
-* **Frontend:** Built with **AlpineJS** and **ECharts**. Lightweight, no complex build-step, with real-time updates ("Live Mode") and **Jitter** visualization.
+* **Frontend:** Built with **AlpineJS** and **Chart.js**. Lightweight, no complex build-step, with real-time updates ("Live Mode") and **Jitter** visualization.
+* **Semantic Visualization:** Service health is represented using a rich color palette:
+  * 🟢 **Healthy:** Service is responding correctly.
+  * 🔴 **Down:** Connection refused or service stopped.
+  * 🟠 **Error:** Server returned an error (HTTP 5xx).
+  * 🟡 **Timeout:** Request exceeded the configured timeout.
+  * ⚪ **Unknown:** Internal monitoring error or unexpected failure.
 * **Backend:** High-performance RESTful API powered by **FastAPI**. Implements **Dynamic Resolution** (`TARGET_DATA_POINTS = 30`) to ensure fluid charts regardless of the queried time range (from 5 minutes to 30 days).
 
 ## 🏗️ System Architecture
@@ -39,7 +45,7 @@ The system uses a **decoupled Producer-Consumer pattern** via a shared database.
                                                 v
                                    +--------------------------+
                                    |    DASHBOARD FRONTEND    |
-                                   |   (AlpineJS / ECharts)   |
+                                   |   (AlpineJS / Chart.js)  |
                                    +--------------------------+
 ```
 
@@ -97,7 +103,7 @@ The agent operates in a main loop, executing every 10 seconds, coordinating coll
 1. **Initialization:** Configuration loading and establishment of persistent connections (Keep-Alive).
 2. **System Metrics (Synchronous):** Instantaneous reading of CPU/RAM/Disk (`psutil`).
 3. **Health Checks (Parallel):** Concurrent threads are launched to verify all configured services and Internet connectivity.
-4. **State Processing:** Changes (Healthy <-> Unhealthy) are evaluated against defined thresholds.
+4. **State Processing:** Changes (Healthy <-> Error/Down/Timeout) are evaluated against defined thresholds.
 5. **Notification/Heartbeat:** If critical changes occur or a heartbeat is due, optimized JSON payloads are sent to external endpoints.
 6. **Persistence:** An atomic commit of all cycle metrics is made to the local database.
 
@@ -117,7 +123,7 @@ The project has evolved into a **Monorepo** architecture to manage both the main
 │   │   └── database.py    # SQLite persistence.
 │   ├── dashboard/     # Visualization Panel (New)
 │   │   ├── backend/       # FastAPI API for analytics.
-│   │   └── frontend/      # Reactive UI (AlpineJS + ECharts).
+│   │   └── frontend/      # Reactive UI (AlpineJS + Chart.js).
 │   └── mocks/         # Mock Server for local development
 │       ├── server.py      # Python test server.
 │       └── templates/     # Mock Controller UI.
@@ -152,7 +158,15 @@ The services to be monitored are configured dynamically via environment variable
 1. **`SERVICE_NAMES`**: Comma-separated list of service names (e.g., `SERVICE_NAMES=nextjs,strapi,umami`).
 2. **`SERVICE_URL_{name}`**: The URL to check for each defined name (e.g., `SERVICE_URL_nextjs=https://www.example.com`).
 
-A service is considered `"healthy"` if it responds with a `2xx` or `3xx` status code. Otherwise, it is marked as `"unhealthy"`.
+### Service States (Rich Taxonomy)
+
+The system uses a granular state model to provide precise diagnostics:
+
+* `healthy`: Service responded with 2xx/3xx.
+* `down`: Connection refused or container stopped.
+* `error`: HTTP 5xx server error.
+* `timeout`: No response within `SERVICE_TIMEOUT_SECONDS`.
+* `unknown`: Monitoring logic failed to execute.
 
 ### Advanced Service Configuration
 
@@ -188,7 +202,7 @@ For environments where services reside on the same local network or server (e.g.
 
 ### Health Status Payload
 
-In each cycle, the agent constructs a JSON payload summarizing the health status of the services and sends it to the `HEARTBEAT_URL`.
+In each cycle, the agent constructs a JSON payload summarizing the health status of the services and sends it to the `HEARTBEAT_URL`. The payload now includes rich states for advanced worker-side processing.
 
 * **Payload Structure:**
 
@@ -196,8 +210,8 @@ In each cycle, the agent constructs a JSON payload summarizing the health status
     {
       "services": {
         "nextjs": { "status": "healthy" },
-        "strapi": { "status": "unhealthy" },
-        "umami": { "status": "healthy" }
+        "strapi": { "status": "down" },
+        "umami": { "status": "timeout" }
       }
     }
     ```
@@ -221,7 +235,7 @@ The system sends alerts to the `N8N_WEBHOOK_URL` under the following conditions,
     * **Timestamp:** All alerts include the exact date and time of the event (configured timezone) for accurate auditing.
 
 3. **Trigger Conditions:**
-    * **Service Downtime:** After `STATUS_CHANGE_THRESHOLD` consecutive failures.
+    * **Service Downtime:** After `STATUS_CHANGE_THRESHOLD` consecutive failures (down/error/timeout).
     * **Service Recovery:** Immediate upon the first success.
     * **Worker Status:** Monitoring of state changes of the Cloudflare worker itself with contextual alerts.
 
@@ -259,8 +273,8 @@ Stores individual status for each monitored service per cycle. 1:N relationship 
 | `cycle_id` | `TEXT (FK)` | Reference to `monitoring_cycles.id`. |
 | `service_name` | `TEXT` | Service name (Indexed). |
 | `service_url` | `TEXT` | Verified endpoint. |
-| `status` | `TEXT` | `'healthy'` or `'unhealthy'`. |
-| `latency_ms` | `REAL` | Service response time. |
+| `status` | `TEXT` | Semantic status: `healthy`, `down`, `error`, `timeout`, `unknown`. |
+| `latency_ms` | `REAL` | Service response time (NULL if down). |
 | `status_code` | `INTEGER` | HTTP response code (e.g., 200, 500). |
 | `error_message` | `TEXT` | Error detail (Timeout, Connection Refused). |
 
@@ -284,7 +298,7 @@ Returns the current system status and historical time series.
 * **Included Metrics:**
   * **Jitter:** Calculated as `MAX(latency) - MIN(latency)` per bucket.
   * **Uptime %:** Calculated over total cycles in the range.
-  * **Error Distribution:** Counts grouped by status codes.
+  * **Status Distribution:** Counts grouped by rich semantic status (healthy, down, error, etc).
 
 ## ⚙️ Configuration & Env Variables
 
@@ -311,11 +325,11 @@ System behavior is centrally controlled via environment variables (`.env` files)
 
 ### 🔍 Service Monitoring
 
-| Variable | Description | Example |
-| :--- | :--- | :--- |
-| `SERVICE_NAMES` | Comma-separated list of service identifiers. | `api,webapp,db_primary` |
-| `SERVICE_URL_{NAME}` | Target URL for health check. Supports `http(s)://` and `docker:`. | `docker:postgres-container` |
-| `SERVICE_HEADERS_{NAME}`| Optional HTTP headers (Auth, User-Agent, etc.). | `Authorization:Bearer xyz` |
+| Variable                | Description                                                       | Example                     |
+| :---------------------- | :---------------------------------------------------------------- | :-------------------------- |
+| `SERVICE_NAMES`         | Comma-separated list of service identifiers.                      | `api,webapp,db_primary`     |
+| `SERVICE_URL_{NAME}`    | Target URL for health check. Supports `http(s)://` and `docker:`. | `docker:postgres-container` |
+| `SERVICE_HEADERS_{NAME}`| Optional HTTP headers (Auth, User-Agent, etc.).                   | `Authorization:Bearer xyz`  |
 
 ### 🌐 Advanced Networking
 
