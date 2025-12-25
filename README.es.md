@@ -153,10 +153,12 @@ La funcionalidad principal del agente es monitorizar el estado de múltiples ser
 
 ### Configuración Dinámica
 
-Los servicios a monitorear se configuran dinámicamente mediante variables de entorno:
+Los servicios se configuran dinámicamente mediante variables de entorno. El agente descubre automáticamente cualquier variable que comience con `SERVICE_URL_`.
 
-1. **`SERVICE_NAMES`**: Lista separada por comas de los nombres de los servicios (ej: `SERVICE_NAMES=nextjs,strapi,umami`).
-2. **`SERVICE_URL_{nombre}`**: La URL a chequear para cada nombre definido (ej: `SERVICE_URL_nextjs=https://www.ejemplo.com`).
+1. **`SERVICE_URL_{nombre}`**: La URL a chequear. El sufijo `{nombre}` actúa como identificador del servicio.
+   * Ejemplo: `SERVICE_URL_nextjs=https://www.ejemplo.com` -> Monitoriza el servicio "nextjs".
+
+Un servicio se considera `"healthy"` si responde con un código `2xx` o `3xx`. Otros códigos resultan en estados específicos como `"error"` (para códigos 5xx).
 
 ### Estados de Servicio (Taxonomía Enriquecida)
 
@@ -184,7 +186,7 @@ Para servicios de infraestructura (como Nginx, túneles, bases de datos) que no 
 
 Algunos endpoints de salud requieren autenticación o headers específicos para responder correctamente. Puedes definirlos usando variables de entorno con el prefijo `SERVICE_HEADERS_`.
 
-* **Sintaxis:** `SERVICE_HEADERS_<nombre>="Header1:Valor1,Header2:Valor2"`
+* **Sintaxis:** `SERVICE_HEADERS_<nombre>="Header1:Value1,Header2:Value2"`
 * **Ejemplo:**
 
     ```bash
@@ -317,7 +319,6 @@ El comportamiento del sistema se controla centralizadamente a través de variabl
 
 | Variable                | Descripción                                                            | Ejemplo                     |
 | :---------------------- | :--------------------------------------------------------------------- | :-------------------------- |
-| `SERVICE_NAMES`         | Lista separada por comas de identificadores de servicios.              | `api,webapp,db_primary`     |
 | `SERVICE_URL_{NAME}`    | URL de destino para el health check. Soporta `http(s)://` y `docker:`. | `docker:postgres-container` |
 | `SERVICE_HEADERS_{NAME}`| Headers HTTP opcionales (Auth, User-Agent, etc.).                      | `Authorization:Bearer xyz`  |
 
@@ -350,7 +351,7 @@ El comportamiento del sistema se controla centralizadamente a través de variabl
 
 2. **Configurar Variables:**
     * Copia `.env.prod.example` a `.env.prod`.
-    * Rellena `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES` y las `SERVICE_URL_*` correspondientes.
+    * Rellena `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, y las `SERVICE_URL_*` correspondientes.
 3. **Ejecutar:**
 
     ```bash
