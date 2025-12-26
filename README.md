@@ -63,6 +63,7 @@ More than a simple "ping" script, this project implements engineering patterns t
   * **IPv4 Enforcement:** Custom HTTP adapters at the transport layer to mitigate common IPv6 resolution delays in Alpine Linux/Docker containers.
 * **🐳 Native Docker Protocol:** Support for the `docker:<container_name>` scheme, allowing direct health checks against the Unix Docker socket (`/var/run/docker.sock`) for services that do not expose HTTP ports.
 * **🛡️ Data Resilience:** Use of SQLite in **WAL (Write-Ahead Logging)** mode to allow high concurrency in read/write operations without database blocking.
+* **🔒 Security by Design:** The dashboard API implements strict **Edge Sanitization**. It automatically hides infrastructure details (internal URLs, ports) and masks technical Python exceptions to prevent information leaks, allowing the dashboard to be safely public.
 * **🔔 Debounced State Management:** Intelligent alerting system that filters false positives using configurable state change thresholds and automatic retry logic for failed webhooks.
 
 ## ⚙️ Agent Execution Flow
@@ -282,7 +283,7 @@ Stores individual status for each monitored service per cycle. 1:N relationship 
 
 ## 🔌 Dashboard API (Backend)
 
-The dashboard backend exposes a REST API optimized for real-time and historical metric consumption.
+The dashboard backend exposes a REST API optimized for real-time and historical metric consumption. **Note:** The API implements automatic sanitization to hide internal infrastructure (real URLs) and mask technical errors, ensuring secure public exposure.
 
 ### `GET /api/live`
 

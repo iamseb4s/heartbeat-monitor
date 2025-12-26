@@ -19,8 +19,9 @@ class ServiceStats(BaseModel):
 
 class ServiceCheckSchema(BaseModel):
     name: str
-    url: Optional[str]
+    service_type: str
     status: str
+    status_code: Optional[int] = None
     latency: Optional[float]
     error: Optional[str] = None # Detailed error message (e.g., "Timeout", "HTTP 500")
     stats: ServiceStats

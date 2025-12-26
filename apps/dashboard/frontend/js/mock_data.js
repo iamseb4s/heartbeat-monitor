@@ -40,41 +40,41 @@ const MOCK_METRICS = {
     services: [
         { 
             name: "nextjs", 
-            url: "https://iamsebas.dev", 
+            service_type: "http", 
             status: "healthy", 
-            code: 200, 
+            status_code: 200, 
             latency: 45,
             stats: { max: 55, avg: 45, min: 35, p95: 50 } 
         },
         { 
             name: "strapi", 
-            url: "https://strapi.iamsebas.dev", 
+            service_type: "http", 
             status: "healthy", 
-            code: 200, 
+            status_code: 200, 
             latency: 120,
             stats: { max: 140, avg: 120, min: 100, p95: 130 }
         },
         { 
             name: "umami", 
-            url: "https://umami.iamsebas.dev", 
+            service_type: "http", 
             status: "healthy", 
-            code: 200, 
+            status_code: 200, 
             latency: 30,
             stats: { max: 40, avg: 30, min: 20, p95: 35 }
         },
         { 
             name: "nginx", 
-            url: "docker:nginx", 
+            service_type: "docker", 
             status: "healthy", 
-            code: null, 
+            status_code: null, 
             latency: 10,
             stats: { max: 15, avg: 10, min: 5, p95: 12 }
         },
         { 
             name: "database", 
-            url: "docker:postgres", 
+            service_type: "docker", 
             status: "unhealthy", 
-            code: null, 
+            status_code: null, 
             latency: 0,
             stats: { max: 0, avg: 0, min: 0, p95: 0 }
         }

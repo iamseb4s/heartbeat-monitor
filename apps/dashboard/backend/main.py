@@ -400,15 +400,41 @@ async def get_live_metrics(range: str = "1h", db: AsyncSession = Depends(get_db)
         "services": [
             {
                 "name": s.service_name,
-                "url": s.service_url,
+                "service_type": determine_service_type(s.service_url),
                 "status": s.status,
+                "status_code": s.status_code,
                 "latency": s.latency_ms,
-                "error": s.error_message, # Expose error message for frontend
+                "error": mask_error(s.error_message), # Sanitized error message
                 "stats": stats["services"].get(s.service_name, {"max":0, "avg":0, "min":0, "jitter":0, "uptime": 0, "success": 0, "failure": 0})
             } for s in cycle.service_checks
         ],
         "history": history_data
     }
+
+def determine_service_type(url: str) -> str:
+    """Determines the service type based on the URL scheme."""
+    if not url: return "unknown"
+    if url.startswith("docker:"): return "docker"
+    if url.startswith("http"): return "http"
+    return "unknown"
+
+def mask_error(error: str) -> Optional[str]:
+    """Sanitizes error messages to hide implementation details."""
+    if not error: return None
+    
+    error_lower = error.lower()
+    
+    if "timeout" in error_lower:
+        return "Request Timeout"
+    if "refused" in error_lower or "connect call failed" in error_lower:
+        return "Service Unavailable"
+    if "500" in error_lower or "502" in error_lower or "503" in error_lower or "504" in error_lower:
+        return "Server Error (5xx)"
+    if "404" in error_lower:
+        return "Not Found (404)"
+    
+    # Fallback for other errors
+    return "Health Check Failed"
 
 @app.get("/health")
 async def health_check():

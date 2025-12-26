@@ -63,6 +63,7 @@ Más que un simple script de "ping", este proyecto implementa patrones de ingeni
   * **IPv4 Enforcement:** Adaptadores HTTP personalizados a nivel de transporte para mitigar los retrasos de resolución IPv6 comunes en contenedores Alpine Linux.
 * **🐳 Protocolo Docker Nativo:** Soporte para el esquema `docker:<container_name>`, permitiendo verificaciones de salud directas contra el socket Unix de Docker (`/var/run/docker.sock`) para servicios que no exponen puertos HTTP.
 * **🛡️ Resiliencia de Datos:** Uso de SQLite en modo **WAL (Write-Ahead Logging)** para permitir alta concurrencia en operaciones de lectura/escritura sin bloqueos de base de datos.
+* **🔒 Seguridad por Diseño (Security by Design):** La API del dashboard implementa sanitización estricta en el borde (*Edge Sanitization*). Oculta automáticamente detalles de infraestructura (URLs internas, puertos) y enmascara excepciones técnicas de Python para evitar fugas de información, permitiendo que el dashboard sea público de forma segura.
 * **🔔 Gestión de Estado con "Debounce":** Sistema de alertas inteligente que filtra falsos positivos mediante umbrales de cambio de estado configurables y lógica de reintentos automática ante fallos del webhook.
 
 ## ⚙️ Flujo de Ejecución del Agente
@@ -282,7 +283,7 @@ Almacena el estado individual de cada servicio monitoreado en un ciclo. Relació
 
 ## 🔌 API del Dashboard (Backend)
 
-El backend del dashboard expone una API REST optimizada para consumo de métricas históricas y en tiempo real.
+El backend del dashboard expone una API REST optimizada para consumo de métricas históricas y en tiempo real. **Nota:** La API implementa sanitización automática para ocultar infraestructura interna (URLs reales) y enmascarar errores técnicos, garantizando una exposición pública segura.
 
 ### `GET /api/live`
 
