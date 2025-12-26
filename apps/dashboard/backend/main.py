@@ -21,11 +21,18 @@ TARGET_DATA_POINTS = int(os.getenv('TARGET_DATA_POINTS', 30))
 
 app = FastAPI(title="Heartbeat Dashboard API")
 
-# Enable CORS for frontend development
+# Enable CORS
+# Prevent resource abuse
+origins = [
+    "https://heartbeat.iamsebas.dev",
+    "http://localhost:8098",
+    "http://127.0.0.1:8098"
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=origins,
+    allow_methods=["GET", "OPTIONS"], # Only allow read operations
     allow_headers=["*"],
 )
 

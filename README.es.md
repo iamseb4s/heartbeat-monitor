@@ -15,7 +15,7 @@ Desarrollado en **Python 3.14 (Alpine)**, enfocado en la eficiencia de recursos 
 
 El sistema incluye un panel de control moderno para visualizar la salud de tu infraestructura.
 
-* **Frontend:** Construido con **AlpineJS** y **Chart.js**. Ligero, sin build-step complejo, con actualizaciones en tiempo real ("Live Mode") y visualización de **Jitter**.
+* **Frontend:** Construido con **AlpineJS** y **Apache ECharts**. Ligero, sin build-step complejo, con actualizaciones en tiempo real ("Live Mode") y visualización de **Jitter**.
 * **Visualización Semántica:** La salud de los servicios se representa mediante una paleta de colores enriquecida:
   * 🟢 **Healthy (Saludable):** El servicio responde correctamente (2xx/3xx).
   * 🔴 **Down (Caído):** Conexión rechazada o contenedor detenido.
@@ -29,24 +29,24 @@ El sistema incluye un panel de control moderno para visualizar la salud de tu in
 El sistema utiliza un patrón de **Productor-Consumidor desacoplado** a través de la base de datos compartida.
 
 ```ascii
-+----------------------+           +------------------------+
-|   HEARTBEAT AGENT    |  (Write)  |     SQLITE (WAL)       |
-| (Python / Productor) |---------->| (Persistencia Híbrida) |
-+----------------------+           +------------------------+
++----------------------+           +---------------------------+
+|   HEARTBEAT AGENT    |  (Write)  |        SQLITE (WAL)       |
+| (Python / Productor) |---------->|   (Persistencia Híbrida)  |
++----------------------+           +---------------------------+
           ^                                    ^
           | (10s Loop)                         |
           |                                    | (Read-Only :ro)
-+---------+------------+           +-----------+------------+
-| Servicios / Docker   |           |   DASHBOARD BACKEND    |
-| (Target a Monitorear)|           | (FastAPI / Consumidor) |
-+----------------------+           +-----------+------------+
++---------+------------+           +-----------+---------------+
+| Servicios / Docker   |           |     DASHBOARD BACKEND     |
+| (Target a Monitorear)|           |   (FastAPI / Consumidor)  |
++----------------------+           +-----------+---------------+
                                                ^
                                                | (JSON / REST)
                                                v
-                                   +------------------------+
-                                   |   DASHBOARD FRONTEND   |
-                                   |   (AlpineJS / Chart.js)|
-                                   +------------------------+
+                                   +---------------------------+
+                                   |     DASHBOARD FRONTEND    |
+                                   |(AlpineJS / Apache ECharts)|
+                                   +---------------------------+
 ```
 
 1. **Agente (Escritura):** Tiene acceso exclusivo de escritura a la DB. Usa modo WAL para no bloquear lecturas.
@@ -115,22 +115,22 @@ El proyecto ha evolucionado hacia una arquitectura de **Monorepo** para gestiona
 ```text
 /
 ├── apps/
-│   ├── heartbeat/     # Agente de Monitorización (Python Service)
-│   │   ├── main.py        # Orquestador principal.
-│   │   ├── config.py      # Gestión de configuración.
-│   │   ├── monitors.py    # Lógica de health checks y métricas.
-│   │   ├── alerts.py      # Gestión de estado y notificaciones.
-│   │   ├── network.py     # Capa de red (Smart Request, IPv4).
-│   │   └── database.py    # Persistencia SQLite.
-│   ├── dashboard/     # Panel de Visualización (Nuevo)
-│   │   ├── backend/       # API FastAPI para analítica.
-│   │   └── frontend/      # UI Reactiva (AlpineJS + Chart.js).
-│   └── mocks/         # Mock Server para desarrollo local
-│       ├── server.py      # Servidor Python de pruebas.
-│       └── templates/     # UI del Mock Controller.
-├── data/              # Volúmenes persistentes (DBs, logs)
-│   ├── metrics.db     # Base de datos Producción.
-│   ├── metrics_dev.db # Base de datos Desarrollo.
+│   ├── heartbeat/           # Agente de Monitorización (Python Service)
+│   │   ├── main.py          # Orquestador principal.
+│   │   ├── config.py        # Gestión de configuración.
+│   │   ├── monitors.py      # Lógica de health checks y métricas.
+│   │   ├── alerts.py        # Gestión de estado y notificaciones.
+│   │   ├── network.py       # Capa de red (Smart Request, IPv4).
+│   │   └── database.py      # Persistencia SQLite.
+│   ├── dashboard/           # Panel de Visualización (Nuevo)
+│   │   ├── backend/         # API FastAPI para analítica.
+│   │   └── frontend/        # UI Reactiva (AlpineJS + Apache ECharts).
+│   └── mocks/               # Mock Server para desarrollo local
+│       ├── server.py        # Servidor Python de pruebas.
+│       └── templates/       # UI del Mock Controller.
+├── data/                    # Volúmenes persistentes (DBs, logs)
+│   ├── metrics.db           # Base de datos Producción.
+│   ├── metrics_dev.db       # Base de datos Desarrollo.
 │   └── ...
 ├── docker-compose.prod.yml  # Stack Producción (Agente + Dashboard).
 ├── docker-compose.dev.yml   # Stack Desarrollo (Agente + Dashboard + Mock).
