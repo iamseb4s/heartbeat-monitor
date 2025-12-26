@@ -374,9 +374,15 @@ h2 {
 
 /* Live Mode Animation */
 @keyframes blink {
-  0% { opacity: 1; }
-  50% { opacity: 0.4; }
-  100% { opacity: 1; }
+  0% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.4;
+  }
+  100% {
+    opacity: 1;
+  }
 }
 
 .time-filter-btn.live-active {
@@ -384,4 +390,80 @@ h2 {
   color: var(--text-primary);
   border-color: var(--border-color);
   animation: blink 2s infinite ease-in-out;
+}
+
+/* GitHub Badge - Animated Border */
+@keyframes border-travel {
+  0% {
+    transform: translate(-50%, -50%) rotate(0deg);
+  }
+  100% {
+    transform: translate(-50%, -50%) rotate(360deg);
+  }
+}
+
+.github-badge {
+  position: absolute;
+  top: 0;
+  right: 0;
+
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  /* Size & Font */
+  padding: 0.5rem 1rem;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-decoration: none;
+  color: var(--text-secondary);
+
+  /* Border & Shape Construction */
+  border-radius: 9999px;
+  overflow: hidden;
+  isolation: isolate;
+  border: none;
+
+  /* Base color for the "dim" part of the border */
+  background-color: var(--border-color);
+
+  transition: color 0.2s ease;
+}
+
+/* The Rotating Light */
+.github-badge::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 400%; /* Large enough to cover rotation on wide aspect ratio */
+  height: 400%;
+  background: conic-gradient(
+    from 0deg,
+    transparent 20%,
+    rgba(255, 255, 255, 1) 100%
+  );
+  animation: border-travel 3s linear infinite;
+  z-index: -2;
+  filter: blur(2px);
+}
+
+/* The Inner Background Mask */
+.github-badge::after {
+  content: "";
+  position: absolute;
+  inset: 1.2px;
+  background: var(--input-background);
+  border-radius: 9999px;
+  z-index: -1;
+  transition: background-color 0.2s ease;
+}
+
+/* Hover States */
+.github-badge:hover {
+  color: var(--text-primary);
+}
+
+.github-badge:hover::after {
+  background-color: rgba(255, 255, 255, 0.1);
 }
