@@ -93,6 +93,16 @@ document.addEventListener("alpine:init", () => {
 
       // --- Helpers ---
 
+      escapeHtml(unsafe) {
+        if (!unsafe) return "";
+        return unsafe
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/"/g, "&quot;")
+          .replace(/'/g, "&#039;");
+      },
+
       formatTime(isoString) {
         if (!isoString) return "--:--";
         const date = new Date(isoString);
@@ -269,7 +279,8 @@ document.addEventListener("alpine:init", () => {
             borderColor: "#27272a", 
             textStyle: { color: "#fafafa" },
             formatter: (params) => {
-              return `${params.marker} <span style="font-weight:bold">${params.name}</span>: ${params.value} (${params.percent}%)`;
+              const safeName = this.escapeHtml(params.name);
+              return `${params.marker} <span style="font-weight:bold">${safeName}</span>: ${params.value} (${params.percent}%)`;
             },
             confine: false,
             appendToBody: true,
