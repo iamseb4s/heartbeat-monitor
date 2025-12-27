@@ -27,6 +27,5 @@ services:
       - ./.env.prod
     volumes:
       - ./data:/app/data
-      - ./apps/dashboard/frontend:/app/frontend:ro
     depends_on:
       - heartbeat-agent-prod
