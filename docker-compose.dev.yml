@@ -32,8 +32,8 @@ services:
 
   heartbeat-dashboard-dev:
     build:
-      context: ./apps/dashboard/backend
-      dockerfile: Dockerfile
+      context: ./apps/dashboard
+      dockerfile: backend/Dockerfile
     container_name: heartbeat-dashboard-dev
     ports:
       - "8098:8000"
