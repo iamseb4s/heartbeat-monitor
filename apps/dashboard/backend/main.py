@@ -95,6 +95,8 @@ async def fetch_analytics_optimized(db: AsyncSession, range_str: str):
     deltas = {
         "live": datetime.timedelta(minutes=5),
         "1h":  datetime.timedelta(hours=1),
+        "3h":  datetime.timedelta(hours=3),
+        "6h":  datetime.timedelta(hours=6),
         "12h": datetime.timedelta(hours=12),
         "24h": datetime.timedelta(hours=24),
         "7d":  datetime.timedelta(days=7),
