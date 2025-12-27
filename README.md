@@ -22,7 +22,9 @@ The system includes a modern control panel to visualize your infrastructure heal
   * 🟠 **Error:** Server returned an error (HTTP 5xx).
   * 🟡 **Timeout:** Request exceeded the configured timeout.
   * ⚪ **Unknown:** Internal monitoring error or unexpected failure.
-* **Backend:** High-performance RESTful API powered by **FastAPI**. Implements **Dynamic Resolution** (`TARGET_DATA_POINTS = 30`) to ensure fluid charts regardless of the queried time range (from 5 minutes to 30 days).
+* **Backend:** High-performance RESTful API powered by **FastAPI**.
+  * **SSR:** Server-Side Rendering (Jinja2) for secure configuration injection (e.g., analytics scripts).
+  * **Dynamic Resolution:** (`TARGET_DATA_POINTS = 30`) to ensure fluid charts regardless of the queried time range (from 5 minutes to 30 days).
 
 ## 🏗️ System Architecture
 
@@ -290,7 +292,7 @@ The dashboard backend exposes a REST API optimized for real-time and historical 
 Returns the current system status and historical time series.
 
 * **Parameters:**
-  * `range` (Query, optional): Time window. Options: `live` (5m), `1h`, `12h`, `24h`, `7d`, `30d`. Default: `1h`.
+  * `range` (Query, optional): Time window. Options: `live` (5m), `1h`, `3h`, `6h`, `12h`, `24h`, `7d`, `30d`.
 
 * **Optimization (Dynamic Resolution):**
   The backend automatically applies a downsampling algorithm based on the `TARGET_DATA_POINTS = 30` constant.
@@ -316,6 +318,8 @@ System behavior is centrally controlled via environment variables (`.env` files)
 | `SERVICE_TIMEOUT_SECONDS` | Maximum wait time for each service health check. | `2` |
 | `TARGET_DATA_POINTS` | Point density in dashboard charts (Bucketing). | `30` |
 | `TZ` | System timezone (e.g., `America/Lima`). | `UTC` |
+| `UMAMI_SCRIPT_URL` | Analytics script URL (optional). | `https://umami.io/script.js` |
+| `UMAMI_WEBSITE_ID` | Analytics website ID (optional). | `uuid-v4` |
 
 ### 🔑 Credentials & Endpoints
 
