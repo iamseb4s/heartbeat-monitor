@@ -8,8 +8,18 @@
       defer
       src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"
     ></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <link rel="stylesheet" href="css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+
+    <!-- Analytics -->
+    {% if umami_script_url and umami_website_id %}
+    <script
+      async
+      defer
+      src="{{ umami_script_url }}"
+      data-website-id="{{ umami_website_id }}"
+    ></script>
+    {% endif %}
   </head>
   <body x-data="dashboardApp()">
     <!-- Floating Update Toast (Visible on scroll) -->
