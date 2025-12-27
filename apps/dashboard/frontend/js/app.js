@@ -29,6 +29,7 @@ document.addEventListener("alpine:init", () => {
     return {
       activeTab: "general",
       timeRange: "live",
+      timeOptions: ['live', '1h', '3h', '6h', '12h', '24h', '7d', '30d'],
       metrics: MOCK_METRICS, // Initial placeholder
       scrolled: false,
       

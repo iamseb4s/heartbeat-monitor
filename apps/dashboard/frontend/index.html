@@ -8,8 +8,18 @@
       defer
       src="https://cdn.jsdelivr.net/npm/alpinejs@3.13.3/dist/cdn.min.js"
     ></script>
-    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
     <link rel="stylesheet" href="css/style.css" />
+    <script src="https://cdn.jsdelivr.net/npm/echarts@5.4.3/dist/echarts.min.js"></script>
+
+    <!-- Analytics -->
+    {% if umami_script_url and umami_website_id %}
+    <script
+      async
+      defer
+      src="{{ umami_script_url }}"
+      data-website-id="{{ umami_website_id }}"
+    ></script>
+    {% endif %}
   </head>
   <body x-data="dashboardApp()">
     <!-- Floating Update Toast (Visible on scroll) -->
@@ -51,6 +61,7 @@
             target="_blank"
             class="github-badge"
             title="View Source on GitHub"
+            data-umami-event="GitHub Badge Click"
           >
             <svg
               xmlns="http://www.w3.org/2000/svg"
@@ -139,48 +150,18 @@
 
       <!-- Time Range Selector -->
       <div class="toolbar-container">
-        <button
-          class="time-filter-btn"
-          :class="timeRange === 'live' ? 'active live-active' : ''"
-          @click="timeRange = 'live'"
-        >
-          Live
-        </button>
-        <button
-          class="time-filter-btn"
-          :class="timeRange === '1h' ? 'active' : ''"
-          @click="timeRange = '1h'"
-        >
-          1h
-        </button>
-        <button
-          class="time-filter-btn"
-          :class="timeRange === '12h' ? 'active' : ''"
-          @click="timeRange = '12h'"
-        >
-          12h
-        </button>
-        <button
-          class="time-filter-btn"
-          :class="timeRange === '24h' ? 'active' : ''"
-          @click="timeRange = '24h'"
-        >
-          24h
-        </button>
-        <button
-          class="time-filter-btn"
-          :class="timeRange === '7d' ? 'active' : ''"
-          @click="timeRange = '7d'"
-        >
-          7d
-        </button>
-        <button
-          class="time-filter-btn"
-          :class="timeRange === '30d' ? 'active' : ''"
-          @click="timeRange = '30d'"
-        >
-          30d
-        </button>
+        <template x-for="range in timeOptions" :key="range">
+          <button
+            class="time-filter-btn"
+            :class="{ 
+              'active': timeRange === range, 
+              'live-active': range === 'live' && timeRange === 'live' 
+            }"
+            @click="timeRange = range"
+            x-text="range === 'live' ? 'Live' : range"
+            :data-umami-event="'Time Filter: ' + range"
+          ></button>
+        </template>
       </div>
 
       <!-- Content Views -->
@@ -504,6 +485,7 @@
         class="dock-item"
         :class="activeTab === 'general' ? 'active' : ''"
         @click="activeTab = 'general'"
+        data-umami-event="View: General"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"
@@ -527,6 +509,7 @@
         class="dock-item"
         :class="activeTab === 'services' ? 'active' : ''"
         @click="activeTab = 'services'"
+        data-umami-event="View: Services"
       >
         <svg
           xmlns="http://www.w3.org/2000/svg"

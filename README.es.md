@@ -22,7 +22,9 @@ El sistema incluye un panel de control moderno para visualizar la salud de tu in
   * 🟠 **Error:** El servidor retornó un error (HTTP 5xx).
   * 🟡 **Timeout:** La petición excedió el tiempo de espera configurado.
   * ⚪ **Unknown (Desconocido):** Error interno de monitorización o fallo inesperado.
-* **Backend:** API RESTful de alto rendimiento con **FastAPI**. Implementa **Resolución Dinámica** (`TARGET_DATA_POINTS = 30`) para garantizar gráficos fluidos sin importar el rango de tiempo consultado (desde 5 minutos hasta 30 días).
+* **Backend:** API RESTful de alto rendimiento con **FastAPI**.
+  * **SSR:** Renderizado del lado del servidor (Jinja2) para inyección segura de configuración (ej. scripts de analítica).
+  * **Resolución Dinámica:** (`TARGET_DATA_POINTS = 30`) para garantizar gráficos fluidos sin importar el rango de tiempo consultado (desde 5 minutos hasta 30 días).
 
 ## 🏗️ Arquitectura del Sistema
 
@@ -290,7 +292,7 @@ El backend del dashboard expone una API REST optimizada para consumo de métrica
 Retorna el estado actual del sistema y las series de tiempo históricas.
 
 * **Parámetros:**
-  * `range` (Query, opcional): Ventana de tiempo. Opciones: `live` (5m), `1h`, `12h`, `24h`, `7d`, `30d`. Default: `1h`.
+  * `range` (Query, opcional): Ventana de tiempo. Opciones: `live` (5m), `1h`, `3h`, `6h`, `12h`, `24h`, `7d`, `30d`.
 
 * **Optimización (Resolución Dinámica):**
   El backend aplica automáticamente un algoritmo de *downsampling* basado en la constante `TARGET_DATA_POINTS = 30`.
@@ -338,6 +340,8 @@ El comportamiento del sistema se controla centralizadamente a través de variabl
 | `SERVICE_TIMEOUT_SECONDS` | Tiempo de espera máximo para cada health check. | `2` |
 | `TARGET_DATA_POINTS` | Densidad de puntos en las gráficas del dashboard (Bucketing). | `30` |
 | `TZ` | Zona horaria del sistema (ej. `America/Lima`). | `UTC` |
+| `UMAMI_SCRIPT_URL` | URL del script de analítica (opcional). | `https://umami.io/script.js` |
+| `UMAMI_WEBSITE_ID` | ID del sitio para analítica (opcional). | `uuid-v4` |
 
 ## 🛠️ Configuración y Despliegue
 

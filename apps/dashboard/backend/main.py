@@ -1,6 +1,8 @@
-from fastapi import FastAPI, Depends, HTTPException, Query
+from fastapi import FastAPI, Depends, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from sqlalchemy.orm import selectinload
@@ -20,6 +22,10 @@ import schemas
 TARGET_DATA_POINTS = int(os.getenv('TARGET_DATA_POINTS', 30))
 
 app = FastAPI(title="Heartbeat Dashboard API")
+
+# Setup templates
+templates_dir = os.path.join(os.path.dirname(__file__), "frontend")
+templates = Jinja2Templates(directory=templates_dir)
 
 # Enable CORS
 # Prevent resource abuse
@@ -89,6 +95,8 @@ async def fetch_analytics_optimized(db: AsyncSession, range_str: str):
     deltas = {
         "live": datetime.timedelta(minutes=5),
         "1h":  datetime.timedelta(hours=1),
+        "3h":  datetime.timedelta(hours=3),
+        "6h":  datetime.timedelta(hours=6),
         "12h": datetime.timedelta(hours=12),
         "24h": datetime.timedelta(hours=24),
         "7d":  datetime.timedelta(days=7),
@@ -447,10 +455,18 @@ def mask_error(error: str) -> Optional[str]:
 async def health_check():
     return {"status": "ok", "timestamp": datetime.datetime.now().isoformat()}
 
-# Serve Static Files (Frontend)
-# Must be placed after API routes to avoid capturing /api requests
+# Serve Root with Umami Analytics (Template)
+@app.get("/", response_class=HTMLResponse)
+async def read_root(request: Request):
+    return templates.TemplateResponse("index.html", {
+        "request": request,
+        "umami_script_url": os.getenv("UMAMI_SCRIPT_URL"),
+        "umami_website_id": os.getenv("UMAMI_WEBSITE_ID")
+    })
+
+# Serve Static Files (CSS, JS, etc.)
 static_dir = os.path.join(os.path.dirname(__file__), "frontend")
 if os.path.exists(static_dir):
-    app.mount("/", StaticFiles(directory=static_dir, html=True), name="frontend")
+    app.mount("/", StaticFiles(directory=static_dir, html=False), name="frontend")
 else:
     print(f"WARNING: Static folder not found at {static_dir}")
