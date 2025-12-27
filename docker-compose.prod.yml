@@ -17,8 +17,8 @@ services:
 
   heartbeat-dashboard-prod:
     build:
-      context: ./apps/dashboard/backend
-      dockerfile: Dockerfile
+      context: ./apps/dashboard
+      dockerfile: backend/Dockerfile
     container_name: heartbeat-dashboard-prod
     restart: unless-stopped
     ports:

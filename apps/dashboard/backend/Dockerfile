@@ -6,11 +6,14 @@ WORKDIR /app
 RUN apk add --no-cache gcc musl-dev linux-headers
 
 # Install Python dependencies
-COPY requirements.txt .
+COPY backend/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY . .
+# Copy backend code to /app
+COPY backend/ .
+
+# Copy frontend code to /app/frontend so it's baked into the image
+COPY frontend/ frontend/
 
 # Expose FastAPI port
 EXPOSE 8000
