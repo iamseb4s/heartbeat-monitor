@@ -7,6 +7,10 @@
   <img src="https://img.shields.io/badge/Docker-passing-brightgreen.svg" alt="Docker Build Status">
 </p>
 
+<p align="center">
+  <img src="assets/heartbeat-dashboard.png" alt="Heartbeat Monitor Dashboard" width="60%">
+</p>
+
 Un sistema de observabilidad ligero, modular y concurrente diseñado específicamente para entornos Dockerizados. Este sistema no solo verifica la disponibilidad, sino que optimiza la latencia de red, gestiona el estado de los servicios con una arquitectura resiliente y ofrece visualización en tiempo real.
 
 Desarrollado en **Python 3.14 (Alpine)**, enfocado en la eficiencia de recursos y la precisión de métricas.
