@@ -101,7 +101,7 @@ def _check_one_service(name, service_config, services_to_check_global):
     if url.startswith("docker:"):
         client = get_docker_client()
         if not client:
-            result.update({"status": "unknown", "error": "Docker client unavailable"})
+            result.update({"status": "unknown", "error": "Docker Socket Unavailable"})
             return name, result
         
         container_name = url.split(":", 1)[1].strip()
