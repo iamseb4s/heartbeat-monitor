@@ -110,7 +110,10 @@
                 <polyline points="3.27 6.96 12 12.01 20.73 6.96"></polyline>
                 <line x1="12" y1="22.08" x2="12" y2="12"></line>
               </svg>
-              <span x-text="metrics.system.containers + ' Containers'">--</span>
+              <span 
+                x-text="metrics.system.containers"
+                :class="metrics.system.containers.includes('Error') ? 'text-danger' : ''"
+              >--</span>
             </div>
             <div class="info-pill">
               <svg
@@ -410,7 +413,7 @@
                         class="status-dot"
                         :class="service.status === 'healthy' ? 'online' : ''"
                       ></div>
-                      <span x-text="service.status"></span>
+                      <span x-text="service.error === 'Docker Socket Unavailable' ? 'DOCKER ERROR' : service.status"></span>
                     </span>
                   </div>
                 </div>

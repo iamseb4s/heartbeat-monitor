@@ -11,11 +11,38 @@ PING_URL = "http://www.google.com"
 SERVICE_TIMEOUT_SECONDS = int(os.getenv('SERVICE_TIMEOUT_SECONDS', 2))
 
 # Docker client setup
-try:
-    docker_client = docker.from_env(timeout=2)
-except Exception as e:
-    print(f"WARNING: Could not connect to Docker socket: {e}. Docker container checks will fail.")
-    docker_client = None
+_client_cache = None
+
+def get_docker_client():
+    """
+    Retrieves a cached Docker client or attempts to create a new one.
+    Resilient to socket availability issues during startup or runtime.
+    Logs errors on every failure to ensure visibility.
+    """
+    global _client_cache
+    
+    # 1. Try to use existing client
+    if _client_cache:
+        try:
+            # Simple ping to verify connection is still alive
+            _client_cache.ping()
+            return _client_cache
+        except Exception as e:
+            print(f"ERROR: Docker client connection lost: {e}")
+            # If ping fails, invalidate cache and try to recreate
+            _client_cache = None
+
+    # 2. Try to create new client
+    try:
+        client = docker.from_env(timeout=2)
+        client.ping() # Verify immediate connectivity
+        _client_cache = client
+        print("INFO: Docker connection established/restored.")
+        return _client_cache
+    except Exception as e:
+        # Docker socket not ready yet or unavailable - Log on every cycle
+        print(f"ERROR: Cannot connect to Docker socket: {e}")
+        return None
 
 def get_system_metrics():
     """Collects and rounds CPU, RAM, Disk metrics, and calculates Uptime."""
@@ -36,10 +63,11 @@ def get_system_metrics():
 
 def get_container_count():
     """Counts running Docker containers."""
-    if not docker_client:
+    client = get_docker_client()
+    if not client:
         return -1
     try:
-        return len(docker_client.containers.list())
+        return len(client.containers.list())
     except Exception as e:
         print(f"Error counting Docker containers: {e}")
         return -1
@@ -71,14 +99,15 @@ def _check_one_service(name, service_config, services_to_check_global):
     }
     
     if url.startswith("docker:"):
-        if not docker_client:
-            result.update({"status": "unknown", "error": "Docker client unavailable"})
+        client = get_docker_client()
+        if not client:
+            result.update({"status": "unknown", "error": "Docker Socket Unavailable"})
             return name, result
         
         container_name = url.split(":", 1)[1].strip()
         start_time = time.monotonic()
         try:
-            container = docker_client.containers.get(container_name)
+            container = client.containers.get(container_name)
             if container.status == 'running':
                 latency_ms = int((time.monotonic() - start_time) * 1000)
                 result.update({

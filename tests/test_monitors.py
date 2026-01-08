@@ -12,8 +12,10 @@ def test_check_one_service_docker_running():
     mock_container = MagicMock()
     mock_container.status = 'running'
     
-    with patch('monitors.docker_client') as mock_client:
+    with patch('monitors.get_docker_client') as mock_get_client:
+        mock_client = MagicMock()
         mock_client.containers.get.return_value = mock_container
+        mock_get_client.return_value = mock_client
         
         name, result = monitors._check_one_service(service_name, service_config, services_global)
         
@@ -30,8 +32,10 @@ def test_check_one_service_docker_stopped():
     mock_container = MagicMock()
     mock_container.status = 'exited'
     
-    with patch('monitors.docker_client') as mock_client:
+    with patch('monitors.get_docker_client') as mock_get_client:
+        mock_client = MagicMock()
         mock_client.containers.get.return_value = mock_container
+        mock_get_client.return_value = mock_client
         
         name, result = monitors._check_one_service(service_name, service_config, services_global)
         
@@ -44,8 +48,10 @@ def test_check_one_service_docker_not_found():
     service_config = {"url": "docker:ghost-container"}
     services_global = {}
     
-    with patch('monitors.docker_client') as mock_client:
+    with patch('monitors.get_docker_client') as mock_get_client:
+        mock_client = MagicMock()
         mock_client.containers.get.side_effect = docker.errors.NotFound("Not found")
+        mock_get_client.return_value = mock_client
         
         name, result = monitors._check_one_service(service_name, service_config, services_global)
         

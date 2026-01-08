@@ -397,7 +397,7 @@ async def get_live_metrics(range: str = "1h", db: AsyncSession = Depends(get_db)
             "cpu": cycle.cpu_percent,
             "ram": cycle.ram_percent,
             "disk": cycle.disk_percent,
-            "containers": cycle.container_count,
+            "containers": "Docker Error" if cycle.container_count == -1 else f"{cycle.container_count} Containers",
             "uptime": format_uptime(cycle.uptime_seconds)
         },
         "monitor": {
@@ -439,6 +439,8 @@ def mask_error(error: str) -> Optional[str]:
     
     error_lower = error.lower()
     
+    if "docker socket unavailable" in error_lower:
+        return "Docker Socket Unavailable"
     if "timeout" in error_lower:
         return "Request Timeout"
     if "refused" in error_lower or "connect call failed" in error_lower:

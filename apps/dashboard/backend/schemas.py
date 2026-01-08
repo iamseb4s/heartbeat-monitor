@@ -42,7 +42,7 @@ class SystemInfo(BaseModel):
     cpu: float
     ram: float
     disk: float
-    containers: int
+    containers: str
     uptime: str
 
 class MonitorInfo(BaseModel):
