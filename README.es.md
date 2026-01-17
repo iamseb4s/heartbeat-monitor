@@ -57,7 +57,7 @@ El sistema utiliza un patrón de **Productor-Consumidor desacoplado** a través 
 
 1. **Agente (Escritura):** Tiene acceso exclusivo de escritura a la DB. Usa modo WAL para no bloquear lecturas.
 2. **Dashboard (Lectura):** Monta el volumen de datos como `read-only` (`:ro`). Si el agente cae, el dashboard sigue mostrando datos históricos.
-3. **Frontend:** Consume la API del backend mediante *polling* inteligente (cada 2s en modo Live).
+3. **Frontend:** Consume la API del backend mediante *polling* inteligente sincronizado con el ciclo del agente (cada 10s).
 
 ## 🚀 Características Técnicas Destacadas
 
@@ -67,8 +67,12 @@ Más que un simple script de "ping", este proyecto implementa patrones de ingeni
 * **🧠 Red Inteligente (Smart Networking):**
   * **DNS Override & Host Injection:** Mecanismo capaz de interceptar tráfico hacia servicios internos, resolviendo directamente a IPs locales e inyectando cabeceras `Host`. Esto elimina la latencia de resolución DNS externa y el overhead de SSL en redes internas (reducción de ~50ms a ~2ms).
   * **IPv4 Enforcement:** Adaptadores HTTP personalizados a nivel de transporte para mitigar los retrasos de resolución IPv6 comunes en contenedores Alpine Linux.
-* **🐳 Protocolo Docker Nativo:** Soporte para el esquema `docker:<container_name>`, permitiendo verificaciones de salud directas contra el socket Unix de Docker (`/var/run/docker.sock`) para servicios que no exponen puertos HTTP.
-* **🛡️ Resiliencia de Datos:** Uso de SQLite en modo **WAL (Write-Ahead Logging)** para permitir alta concurrencia en operaciones de lectura/escritura sin bloqueos de base de datos.
+* **🐳 Protocolo Docker Nativo & Resiliente:**
+  * Soporte para el esquema `docker:<container_name>`, permitiendo verificaciones de salud directas contra el socket Unix de Docker.
+  * **Auto-Reconexión:** Sistema de *lazy-loading* que maneja caídas o reinicios del servicio Docker sin crashear el agente, reportando claramente "Docker Socket Unavailable" hasta que el servicio se recupera.
+* **🛡️ Persistencia de Alto Rendimiento:**
+  * Uso de SQLite en modo **WAL (Write-Ahead Logging)** para permitir alta concurrencia en operaciones de lectura/escritura sin bloqueos de base de datos.
+  * **Indexación Avanzada:** Implementación de índices compuestos ("Covering Indexes") y calibración automática del optimizador (`ANALYZE`) al inicio, garantizando consultas analíticas en milisegundos incluso con millones de registros históricos.
 * **🔒 Seguridad por Diseño (Security by Design):** La API del dashboard implementa sanitización estricta en el borde (*Edge Sanitization*). Oculta automáticamente detalles de infraestructura (URLs internas, puertos) y enmascara excepciones técnicas de Python para evitar fugas de información, permitiendo que el dashboard sea público de forma segura.
 * **🔔 Gestión de Estado con "Debounce":** Sistema de alertas inteligente que filtra falsos positivos mediante umbrales de cambio de estado configurables y lógica de reintentos automática ante fallos del webhook.
 
