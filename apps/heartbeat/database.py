@@ -56,6 +56,9 @@ def initialize_database():
         cur.execute("CREATE INDEX IF NOT EXISTS idx_cycles_timestamp ON monitoring_cycles(timestamp_lima);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_checks_service_name ON service_checks(service_name);")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_checks_cycle_id ON service_checks(cycle_id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_cycles_ts_id ON monitoring_cycles(timestamp_lima, id);")
+        cur.execute("CREATE INDEX IF NOT EXISTS idx_svc_cycle_lat ON service_checks(cycle_id, service_name, latency_ms);")
+        cur.execute("ANALYZE;")
 
         con.commit()
         con.close()

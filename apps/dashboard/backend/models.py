@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Integer, Float, String, Boolean, ForeignKey
+from sqlalchemy import Column, Integer, Float, String, Boolean, ForeignKey, Index
 from sqlalchemy.orm import relationship, declarative_base
 
 Base = declarative_base()
@@ -22,6 +22,11 @@ class MonitoringCycle(Base):
     # Relationship to service checks
     service_checks = relationship("ServiceCheck", back_populates="cycle", cascade="all, delete-orphan")
 
+    # Composite index for faster range filtering + JOINs
+    __table_args__ = (
+        Index('idx_cycles_ts_id', 'timestamp_lima', 'id'),
+    )
+
 class ServiceCheck(Base):
     __tablename__ = "service_checks"
 
@@ -36,3 +41,8 @@ class ServiceCheck(Base):
 
     # Back-relationship to the cycle
     cycle = relationship("MonitoringCycle", back_populates="service_checks")
+
+    # Composite index to cover typical analytics queries
+    __table_args__ = (
+        Index('idx_svc_cycle_lat', 'cycle_id', 'service_name', 'latency_ms'),
+    )
