@@ -57,7 +57,7 @@ The system uses a **decoupled Producer-Consumer pattern** via a shared database.
 
 1. **Agent (Write):** Has exclusive write access to the DB. Uses WAL mode to prevent blocking reads.
 2. **Dashboard (Read):** Mounts the data volume as `read-only` (`:ro`). If the agent goes down, the dashboard continues to show historical data.
-3. **Frontend:** Consumes the backend API using intelligent *polling* (every 2s in Live mode).
+3. **Frontend:** Consumes the backend API using intelligent *polling* synchronized with the agent cycle (every 10s).
 
 ## 🚀 Key Technical Features
 
@@ -67,8 +67,12 @@ More than a simple "ping" script, this project implements engineering patterns t
 * **🧠 Smart Networking:**
   * **DNS Override & Host Injection:** Mechanism capable of intercepting traffic to internal services, resolving directly to local IPs and injecting `Host` headers. This eliminates external DNS resolution latency and SSL overhead in internal networks (reducing ~50ms to ~2ms).
   * **IPv4 Enforcement:** Custom HTTP adapters at the transport layer to mitigate common IPv6 resolution delays in Alpine Linux/Docker containers.
-* **🐳 Native Docker Protocol:** Support for the `docker:<container_name>` scheme, allowing direct health checks against the Unix Docker socket (`/var/run/docker.sock`) for services that do not expose HTTP ports.
-* **🛡️ Data Resilience:** Use of SQLite in **WAL (Write-Ahead Logging)** mode to allow high concurrency in read/write operations without database blocking.
+* **🐳 Resilient Native Docker Protocol:**
+  * Support for the `docker:<container_name>` scheme, allowing direct health checks against the Unix Docker socket.
+  * **Auto-Reconnection:** Lazy-loading client system that handles Docker service restarts or power outages without crashing the agent, clearly reporting "Docker Socket Unavailable" until service is restored.
+* **🛡️ High-Performance Persistence:**
+  * Use of SQLite in **WAL (Write-Ahead Logging)** mode.
+  * **Advanced Indexing:** Implementation of Composite Indexes ("Covering Indexes") and automatic optimizer calibration (`ANALYZE`) at startup, ensuring millisecond-level analytics queries even with millions of historical records.
 * **🔒 Security by Design:** The dashboard API implements strict **Edge Sanitization**. It automatically hides infrastructure details (internal URLs, ports) and masks technical Python exceptions to prevent information leaks, allowing the dashboard to be safely public.
 * **🔔 Debounced State Management:** Intelligent alerting system that filters false positives using configurable state change thresholds and automatic retry logic for failed webhooks.
 
