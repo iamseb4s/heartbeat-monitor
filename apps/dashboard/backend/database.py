@@ -11,6 +11,9 @@ DATABASE_URL = f"sqlite+aiosqlite:///{SQLITE_DB_PATH}"
 engine = create_async_engine(
     DATABASE_URL,
     connect_args={"check_same_thread": False},
+    pool_size=20,
+    max_overflow=30,
+    pool_timeout=30,  # Wait up to 30s for a connection before failing
 )
 
 # Async session factory

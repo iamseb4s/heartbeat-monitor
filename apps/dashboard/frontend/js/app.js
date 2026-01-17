@@ -89,7 +89,7 @@ document.addEventListener("alpine:init", () => {
 
         // Start polling
         this.fetchMetrics();
-        setInterval(() => this.fetchMetrics(), 2000);
+        setInterval(() => this.fetchMetrics(), 10000);
       },
 
       // --- Helpers ---
@@ -327,15 +327,36 @@ document.addEventListener("alpine:init", () => {
       },
 
       // --- Core Data Logic ---
+      
+      currentRequestController: null, // Store the active controller
 
       async fetchMetrics() {
+        // Cancel previous request if it exists
+        if (this.currentRequestController) {
+          this.currentRequestController.abort();
+        }
+        
+        // Create new controller for this request
+        this.currentRequestController = new AbortController();
+        const signal = this.currentRequestController.signal;
+
         try {
-          const response = await fetch(`${API_URL}?range=${this.timeRange}`);
+          const response = await fetch(`${API_URL}?range=${this.timeRange}`, { signal });
           if (!response.ok) throw new Error("Backend response error: " + response.status);
           const data = await response.json();
           this.updateDashboard(data);
         } catch (e) { 
-          console.error("API Error - Failed to fetch metrics:", e); 
+          if (e.name === 'AbortError') {
+             // Request cancelled intentionally, do nothing
+             console.log("Previous fetch cancelled");
+          } else {
+             console.error("API Error - Failed to fetch metrics:", e); 
+          }
+        } finally {
+           // Cleanup if this request finished naturally
+           if (this.currentRequestController && this.currentRequestController.signal === signal) {
+              this.currentRequestController = null;
+           }
         }
       },
 
