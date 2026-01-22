@@ -21,8 +21,8 @@ The system includes a modern control panel to visualize your infrastructure heal
 
 * **Frontend:** Built with **AlpineJS** and **Apache ECharts**. Lightweight, no complex build-step, with real-time updates ("Live Mode") and **Jitter** visualization.
 * **Semantic Visualization:** Service health is represented using a rich color palette:
-  * 🟢 **Healthy:** Service is responding correctly.
-  * 🔴 **Down:** Connection refused or service stopped.
+  * 🟢 **Healthy:** Service is responding correctly (2xx/3xx).
+  * 🔴 **Down:** Connection refused or container stopped.
   * 🟠 **Error:** Server returned an error (HTTP 5xx).
   * 🟡 **Timeout:** Request exceeded the configured timeout.
   * ⚪ **Unknown:** Internal monitoring error or unexpected failure.
@@ -42,17 +42,17 @@ The system uses a **decoupled Producer-Consumer pattern** via a shared database.
           ^                                     ^
           | (10s Loop)                          |
           |                                     | (Read-Only :ro)
-+----------------------+           +---------------------------+
++---------+------------+           +-----------+---------------+
 |  Services / Docker   |           |      DASHBOARD BACKEND    |
 | (Monitoring Targets) |           |    (FastAPI / Consumer)   |
-+----------------------+           +---------------------------+
++----------------------+           +-----------+---------------+
                                                 ^
                                                 | (JSON / REST)
                                                 v
-                                   +---------------------------+
-                                   |    DASHBOARD FRONTEND     |
-                                   |(AlpineJS / Apache ECharts)|
-                                   +---------------------------+
+                                    +---------------------------+
+                                    |    DASHBOARD FRONTEND     |
+                                    |(AlpineJS / Apache ECharts)|
+                                    +---------------------------+
 ```
 
 1. **Agent (Write):** Has exclusive write access to the DB. Uses WAL mode to prevent blocking reads.
@@ -66,12 +66,12 @@ More than a simple "ping" script, this project implements engineering patterns t
 * **⚡ Concurrent Architecture:** `ThreadPoolExecutor` implementation to parallelize I/O operations (HTTP requests, Docker socket queries), decoupling metric collection from network blocking and ensuring precise execution cycles.
 * **🧠 Smart Networking:**
   * **DNS Override & Host Injection:** Mechanism capable of intercepting traffic to internal services, resolving directly to local IPs and injecting `Host` headers. This eliminates external DNS resolution latency and SSL overhead in internal networks (reducing ~50ms to ~2ms).
-  * **IPv4 Enforcement:** Custom HTTP adapters at the transport layer to mitigate common IPv6 resolution delays in Alpine Linux/Docker containers.
+  * **IPv4 Enforcement:** Custom HTTP adapters at the transport layer to mitigate common IPv6 resolution delays in Alpine Linux containers.
 * **🐳 Resilient Native Docker Protocol:**
   * Support for the `docker:<container_name>` scheme, allowing direct health checks against the Unix Docker socket.
   * **Auto-Reconnection:** Lazy-loading client system that handles Docker service restarts or power outages without crashing the agent, clearly reporting "Docker Socket Unavailable" until service is restored.
 * **🛡️ High-Performance Persistence:**
-  * Use of SQLite in **WAL (Write-Ahead Logging)** mode.
+  * Use of SQLite in **WAL (Write-Ahead Logging)** mode to allow high concurrency in read/write operations without database locks.
   * **Advanced Indexing:** Implementation of Composite Indexes ("Covering Indexes") and automatic optimizer calibration (`ANALYZE`) at startup, ensuring millisecond-level analytics queries even with millions of historical records.
 * **🔒 Security by Design:** The dashboard API implements strict **Edge Sanitization**. It automatically hides infrastructure details (internal URLs, ports) and masks technical Python exceptions to prevent information leaks, allowing the dashboard to be safely public.
 * **🔔 Debounced State Management:** Intelligent alerting system that filters false positives using configurable state change thresholds and automatic retry logic for failed webhooks.
@@ -243,7 +243,7 @@ The system sends alerts to the `N8N_WEBHOOK_URL` under the following conditions,
     * If sending the alert fails (e.g., webhook timeout), the system automatically retries up to **3 times** before giving up, ensuring critical alerts reach their destination.
 
 2. **Enriched Alerts:**
-    * **Service Down:** Includes the specific reason for the failure (e.g., `HTTP 500`, `Timeout`, `Container Exited`) for facilitate immediate diagnosis.
+    * **Service Down:** Includes the specific reason for the failure (e.g., `HTTP 500`, `Timeout`, `Container Exited`) to facilitate immediate diagnosis.
     * **Service Recovered:** Shows the current latency of the service upon recovery.
     * **Timestamp:** All alerts include the exact date and time of the event (configured timezone) for accurate auditing.
 
@@ -317,7 +317,29 @@ Returns the current system status and historical time series.
 
 System behavior is centrally controlled via environment variables (`.env` files).
 
-### 🔧 Operational Configuration (Advanced)
+### Credentials & Endpoints
+
+| Variable | Required | Description | Example |
+| :--- | :---: | :--- | :--- |
+| `SECRET_KEY` | **Yes** | Shared key to authenticate with the Cloudflare Worker. | `sk_12345abcdef` |
+| `HEARTBEAT_URL` | **Yes** | Cloudflare Worker endpoint URL for heartbeats. | `https://worker.dev/api/heartbeat` |
+| `N8N_WEBHOOK_URL` | No | Webhook URL for external alerts (Slack, Discord, etc). | `https://n8n.mi-server.com/...` |
+| `SQLITE_DB_PATH` | No | Internal path for the SQLite database file. | `data/metrics.db` |
+
+### Service Monitoring
+
+| Variable                | Description                                                       | Example                     |
+| :---------------------- | :---------------------------------------------------------------- | :-------------------------- |
+| `SERVICE_URL_{NAME}`    | Target URL for health check. Supports `http(s)://` and `docker:`. | `docker:postgres-container` |
+| `SERVICE_HEADERS_{NAME}`| Optional HTTP headers (Auth, User-Agent, etc.).                   | `Authorization:Bearer xyz`  |
+
+### Advanced Networking
+
+| Variable | Description | Example |
+| :--- | :--- | :--- |
+| `INTERNAL_DNS_OVERRIDE_IP` | IP to force local DNS resolution. Useful to bypass NAT/Loopback issues. | `172.17.0.1` |
+
+### Operational Configuration (Advanced)
 
 | Variable | Description | Default |
 | :--- | :--- | :--- |
@@ -328,29 +350,6 @@ System behavior is centrally controlled via environment variables (`.env` files)
 | `TZ` | System timezone (e.g., `America/Lima`). | `UTC` |
 | `UMAMI_SCRIPT_URL` | Analytics script URL (optional). | `https://umami.io/script.js` |
 | `UMAMI_WEBSITE_ID` | Analytics website ID (optional). | `uuid-v4` |
-
-### 🔑 Credentials & Endpoints
-
-| Variable | Required | Description | Example |
-| :--- | :---: | :--- | :--- |
-| `SECRET_KEY` | **Yes** | Shared key to authenticate with the Cloudflare Worker. | `sk_12345abcdef` |
-| `HEARTBEAT_URL` | **Yes** | Cloudflare Worker endpoint URL for heartbeats. | `https://worker.dev/api/heartbeat` |
-| `N8N_WEBHOOK_URL` | No | Webhook URL for external alerts (Slack, Discord, etc). | `https://n8n.mi-server.com/...` |
-| `SQLITE_DB_PATH` | No | Internal path for the SQLite database file. | `data/metrics.db` |
-
-### 🔍 Service Monitoring
-
-| Variable                | Description                                                       | Example                     |
-| :---------------------- | :---------------------------------------------------------------- | :-------------------------- |
-| `SERVICE_NAMES`         | Comma-separated list of service identifiers.                      | `api,webapp,db_primary`     |
-| `SERVICE_URL_{NAME}`    | Target URL for health check. Supports `http(s)://` and `docker:`. | `docker:postgres-container` |
-| `SERVICE_HEADERS_{NAME}`| Optional HTTP headers (Auth, User-Agent, etc.).                   | `Authorization:Bearer xyz`  |
-
-### 🌐 Advanced Networking
-
-| Variable | Description | Example |
-| :--- | :--- | :--- |
-| `INTERNAL_DNS_OVERRIDE_IP` | IP to force local DNS resolution. Useful for Docker setups. | `172.17.0.1` |
 
 ## 🛠️ Setup and Deployment
 
@@ -365,7 +364,7 @@ System behavior is centrally controlled via environment variables (`.env` files)
 
 2. **Configure Variables:**
     * Copy `.env.prod.example` to `.env.prod`.
-    * Fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, `SERVICE_NAMES`, and corresponding `SERVICE_URL_*`.
+    * Fill in `SECRET_KEY`, `HEARTBEAT_URL`, `N8N_WEBHOOK_URL`, and corresponding `SERVICE_URL_*`.
 3. **Run:**
 
     ```bash
